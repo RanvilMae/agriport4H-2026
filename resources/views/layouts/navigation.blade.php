@@ -11,25 +11,39 @@
         </h1>
     </div>
 
-    {{-- Right Side: Role Badge & Quick Actions --}}
-    <div class="flex items-center space-x-4">
-        {{-- Role Indicator Badge (Now on the right) --}}
+    {{-- Right Side: Agri-Resume Button, Role Badge & Quick Actions --}}
+    <div class="flex items-center space-x-3">
+        
+        {{-- Agri-Resume Quick Action Button --}}
+        @if (auth()->user()->role === 'Member')
+            <a href="{{ route('member.agri-resume.preview') }}" 
+               class="inline-flex items-center gap-2 px-3.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-black uppercase tracking-wider transition-all shadow-sm">
+                <i class="fa-solid fa-file-invoice text-emerald-600"></i>
+                <span class="hidden md:inline">Agri-Resume</span>
+            </a>
+        @elseif (isset($member))
+            <a href="{{ route('members.agri-resume.show', $member) }}" 
+               class="inline-flex items-center gap-2 px-3.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-black uppercase tracking-wider transition-all shadow-sm">
+                <i class="fa-solid fa-file-invoice text-emerald-600"></i>
+                <span class="hidden md:inline">Agri-Resume</span>
+            </a>
+        @endif
+
+        {{-- Role Indicator Badge --}}
         <div class="flex items-center space-x-2 px-3 py-1 bg-gray-50 border border-gray-200 rounded-lg shadow-sm">
-            <div
-                class="h-2 w-2 rounded-full {{ auth()->user()->role === 'Admin' ? 'bg-indigo-500 animate-pulse' : 'bg-green-500' }}">
-            </div>
+            <div class="h-2 w-2 rounded-full {{ auth()->user()->role === 'Admin' ? 'bg-indigo-500 animate-pulse' : 'bg-green-500' }}"></div>
             <span class="text-[11px] font-bold text-gray-600 uppercase tracking-tighter">
                 {{ auth()->user()->role }} Mode
             </span>
         </div>
 
-        <div class="h-6 w-px bg-gray-200 mx-2"></div>
+        <div class="h-6 w-px bg-gray-200 mx-1"></div>
 
-        {{-- Log Out Trigger (Text-based to keep it clean) --}}
+        {{-- Log Out Trigger --}}
         <form method="POST" action="{{ route('logout') }}">
             @csrf
             <button type="submit"
-                class="text-xs font-bold text-gray-400 hover:text-red-500 uppercase tracking-widest transition-colors">
+                class="text-xs font-bold text-gray-400 hover:text-red-500 uppercase tracking-widest transition-colors pl-1">
                 Logout
             </button>
         </form>

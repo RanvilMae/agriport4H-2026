@@ -24,7 +24,7 @@
             </div>
         @endif
 
-        {{-- Error/Duplicate Notification --}}
+        {{-- Error/Validation Notification --}}
         @if($errors->any())
             <div class="p-4 mb-6 border shadow-sm bg-rose-50 border-rose-100 rounded-2xl">
                 <div class="flex items-center mb-2 space-x-2">
@@ -51,30 +51,42 @@
                 </div>
             </div>
 
-            <form action="{{ route('organizations.store') }}" method="POST" class="space-y-8">
+            <form action="{{ route('organizations.store') }}" method="POST" enctype="multipart/form-data" class="space-y-8">
                 @csrf
                 
                 <div class="grid grid-cols-1 gap-6">
                     {{-- Region Selection --}}
                     <div>
                         <label class="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">Regional Jurisdiction</label>
-                        <select name="region_id" required 
-                                class="w-full px-5 py-4 mt-2 text-xs font-bold border-gray-100 bg-gray-50/50 rounded-2xl focus:ring-emerald-500 focus:border-emerald-500 transition-all @error('region_id') border-rose-200 bg-rose-50/30 @enderror">
-                            
-                            @if(auth()->user()->hasRole('Admin'))
+                        
+                        @if(auth()->user()->hasRole('Admin'))
+                            {{-- Admin can select any region --}}
+                            <select name="region_id" required 
+                                    class="w-full px-5 py-4 mt-2 text-xs font-bold border-gray-100 bg-gray-50/50 rounded-2xl focus:ring-emerald-500 focus:border-emerald-500 transition-all @error('region_id') border-rose-200 bg-rose-50/30 @enderror">
                                 <option value="" disabled selected>Select assigned region...</option>
                                 @foreach($regions as $region)
                                     <option value="{{ $region->id }}" {{ old('region_id') == $region->id ? 'selected' : '' }}>
                                         {{ $region->name }} ({{ $region->region_code }})
                                     </option>
                                 @endforeach
-                            @else
-                                {{-- For Coordinator/President: Only show their specific region --}}
-                                <option value="{{ auth()->user()->region_id }}" selected>
-                                    {{ auth()->user()->region->name }} ({{ auth()->user()->region->region_code }})
-                                </option>
-                            @endif
-                        </select>
+                            </select>
+                        @else
+                            {{-- Non-Admin: Forces region_id to match user's assigned region_id --}}
+                            <input type="hidden" name="region_id" value="{{ auth()->user()->region_id }}">
+                            
+                            <div class="px-5 py-4 mt-2 bg-slate-50/80 rounded-2xl border border-slate-200 flex items-center justify-between">
+                                <div class="flex items-center space-x-2">
+                                    <i class="fas fa-map-marker-alt text-emerald-600 text-xs"></i>
+                                    <span class="text-xs font-bold text-slate-700">
+                                        {{ auth()->user()->region->name ?? 'Assigned Scope' }} 
+                                        <span class="text-emerald-600 font-extrabold">({{ auth()->user()->region->region_code ?? 'N/A' }})</span>
+                                    </span>
+                                </div>
+                                <span class="px-2.5 py-1 text-[9px] font-black tracking-widest text-slate-400 uppercase bg-white border border-slate-200 rounded-lg">
+                                    <i class="fas fa-lock mr-1 text-[8px]"></i> Locked
+                                </span>
+                            </div>
+                        @endif
                     </div>
 
                     {{-- Org Name --}}
@@ -102,8 +114,24 @@
                             </select>
                         </div>
                     </div>
+
+                    {{-- PDF Certification Upload Field --}}
+                    <div>
+                        <label class="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">PDF Certification Document</label>
+                        <div class="p-4 mt-2 border-2 border-dashed border-slate-200 rounded-2xl bg-gray-50/50 hover:bg-gray-50 transition-colors">
+                            <input type="file" 
+                                name="certification" 
+                                id="certification" 
+                                accept="application/pdf"
+                                class="block w-full text-xs text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-[10px] file:font-black file:uppercase file:tracking-wider file:bg-emerald-100 file:text-emerald-700 hover:file:bg-emerald-200 cursor-pointer">
+                            <p class="mt-2 text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                                <i class="fas fa-info-circle mr-1"></i> Accepted format: PDF only (Max file size: 5MB)
+                            </p>
+                        </div>
+                    </div>
                 </div>
 
+                {{-- Submit Button --}}
                 <div class="pt-4">
                     <button type="submit" 
                             class="w-full py-5 font-black text-[10px] text-white uppercase tracking-[0.3em] bg-emerald-600 rounded-3xl hover:bg-emerald-700 shadow-2xl shadow-emerald-100 transition-all transform active:scale-[0.98]">

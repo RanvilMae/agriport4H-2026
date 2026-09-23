@@ -13,7 +13,7 @@
         </div>
     </x-slot>
 
-    <div class="px-4 py-8 mx-auto max-w-7xl sm:px-6 lg:px-8">
+    <div x-data="{ pdfUrl: null, pdfTitle: '', showPdfModal: false }" class="px-4 py-8 mx-auto max-w-7xl sm:px-6 lg:px-8">
 
         {{-- Success & Error Notifications --}}
         @if(session('success'))
@@ -66,7 +66,6 @@
                     @endforeach
                 </select>
 
-                {{-- Manual Submit Button (Optional but helpful for search input) --}}
                 <button type="submit" class="px-5 py-3 text-[10px] font-black text-white uppercase bg-emerald-600 rounded-2xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100">
                     Search
                 </button>
@@ -85,17 +84,22 @@
                     <tr class="border-b bg-slate-50/50 border-gray-50">
                         <th class="px-8 py-5 text-xs font-black tracking-widest uppercase text-slate-500">Region</th>
                         <th class="px-4 py-5 text-xs font-black tracking-widest uppercase text-slate-500">Organization Name</th>
+                        <th class="px-4 py-5 text-xs font-black tracking-widest uppercase text-slate-500">Status</th>
+                        <th class="px-4 py-5 text-xs font-black tracking-widest uppercase text-slate-500">Certification PDF</th>
                         <th class="px-8 py-5 text-xs font-black tracking-widest text-right uppercase text-slate-500">Actions</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-50">
                     @forelse($organizations as $org)
                     <tr class="transition-colors hover:bg-slate-50/80 group">
+                        {{-- Region Badge --}}
                         <td class="px-8 py-4">
                             <span class="px-3 py-1 text-xs font-bold transition-all bg-white border rounded-lg shadow-sm border-slate-200 text-slate-600 group-hover:border-emerald-200">
                                 {{ $org->region->region_code ?? 'N/A' }}
                             </span>
                         </td>
+
+                        {{-- Name & Acronym --}}
                         <td class="px-4 py-5">
                             <div class="flex flex-col">
                                 <span class="text-sm font-bold text-slate-800">{{ $org->name }}</span>
@@ -104,16 +108,71 @@
                                 @endif
                             </div>
                         </td>
-                        <td class="px-8 py-5 text-right">
-                            <button @click="$dispatch('open-edit-modal', { id: {{ $org->id }}, name: '{{ $org->name }}' })" 
-                                    class="text-sm font-bold transition-colors text-emerald-600 hover:text-emerald-800">
-                                Edit
+
+                        {{-- Verification Status Badge --}}
+                        <td class="px-4 py-5">
+                            @if($org->is_verified)
+                                <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 uppercase tracking-wider">
+                                    <i class="fas fa-check-circle mr-1"></i> Verified
+                                </span>
+                            @else
+                                <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-black bg-amber-100 text-amber-800 uppercase tracking-wider">
+                                    <i class="fas fa-clock mr-1"></i> Pending
+                                </span>
+                            @endif
+                        </td>
+
+                        {{-- Certification File Badge --}}
+                        <td class="px-4 py-5">
+                            @if($org->certification_path)
+                                <button type="button"
+                                    @click="pdfUrl = '{{ asset('storage/' . $org->certification_path) }}'; pdfTitle = '{{ addslashes($org->name) }} Certification'; showPdfModal = true;"
+                                    class="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-xl text-[10px] font-black uppercase hover:bg-emerald-600 hover:text-white transition-all shadow-sm">
+                                    <i class="fas fa-file-pdf text-rose-500 group-hover:text-white"></i>
+                                    <span>Preview PDF</span>
+                                </button>
+                            @else
+                                <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                    No File
+                                </span>
+                            @endif
+                        </td>
+
+                        {{-- Actions --}}
+                        <td class="px-8 py-5 text-right space-x-2">
+                            {{-- Verify / Unverify Button --}}
+                            <form action="{{ route('organizations.verify', $org->id) }}" method="POST" class="inline-block">
+                                @csrf
+                                @method('PATCH')
+                                @if(!$org->is_verified)
+                                    <button type="submit" 
+                                        class="px-3 py-1.5 bg-emerald-600 text-white hover:bg-emerald-700 text-[10px] font-black uppercase rounded-xl transition-all shadow-sm">
+                                        <i class="fas fa-check-circle mr-1"></i> Verify
+                                    </button>
+                                @else
+                                    <button type="submit" 
+                                        class="px-3 py-1.5 bg-amber-500 text-white hover:bg-amber-600 text-[10px] font-black uppercase rounded-xl transition-all shadow-sm">
+                                        <i class="fas fa-undo mr-1"></i> Unverify
+                                    </button>
+                                @endif
+                            </form>
+
+                            {{-- Edit Button --}}
+                            <button @click="$dispatch('open-edit-modal', { 
+                                        id: {{ $org->id }}, 
+                                        name: '{{ addslashes($org->name) }}',
+                                        acronym: '{{ addslashes($org->acronym ?? '') }}',
+                                        region_id: {{ $org->region_id }},
+                                        certification_path: '{{ $org->certification_path ?? '' }}'
+                                    })" 
+                                    class="px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 text-[10px] font-black uppercase rounded-xl transition-all">
+                                <i class="fas fa-edit mr-1"></i> Edit
                             </button>
                         </td>
                     </tr>
                     @empty
                     <tr>
-                        <td colspan="3" class="px-8 py-20 text-center text-slate-400">
+                        <td colspan="5" class="px-8 py-20 text-center text-slate-400">
                             <i class="mb-3 text-2xl fas fa-search opacity-20"></i>
                             <p class="text-xs font-bold tracking-widest uppercase">No organizations found matching your filters.</p>
                             @if(request()->anyFilled(['search', 'region']))
@@ -132,9 +191,48 @@
                 </div>
             @endif
         </div>
+
+        {{-- PDF Preview Modal --}}
+        <div x-show="showPdfModal" 
+             x-cloak
+             x-transition:enter="ease-out duration-300"
+             x-transition:enter-start="opacity-0"
+             x-transition:enter-end="opacity-100"
+             x-transition:leave="ease-in duration-200"
+             x-transition:leave-start="opacity-100"
+             x-transition:leave-end="opacity-0"
+             class="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            
+            <div @click.away="showPdfModal = false" 
+                 class="bg-white rounded-[2rem] shadow-2xl border border-slate-100 w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden">
+                
+                {{-- Modal Header --}}
+                <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50">
+                    <div class="flex items-center space-x-3">
+                        <i class="fas fa-file-pdf text-rose-500 text-lg"></i>
+                        <h3 class="text-xs font-black uppercase tracking-widest text-slate-700" x-text="pdfTitle">Document Preview</h3>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <a :href="pdfUrl" target="_blank" class="px-3 py-1.5 bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase hover:bg-emerald-700 transition-all">
+                            <i class="fas fa-external-link-alt mr-1"></i> Open in New Tab
+                        </a>
+                        <button @click="showPdfModal = false" class="p-2 text-slate-400 hover:text-slate-600 transition-colors">
+                            <i class="fas fa-times text-sm"></i>
+                        </button>
+                    </div>
+                </div>
+
+                {{-- Modal Body --}}
+                <div class="flex-grow bg-slate-100 relative">
+                    <template x-if="pdfUrl">
+                        <iframe :src="pdfUrl" class="w-full h-full border-0"></iframe>
+                    </template>
+                </div>
+            </div>
+        </div>
+
     </div>
 
-    {{-- Edit Modal --}}
     @include('organizations.partials.edit-modal')
 
 </x-app-layout>

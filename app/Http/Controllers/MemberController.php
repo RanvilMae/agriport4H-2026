@@ -2,35 +2,42 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Member;
-use App\Models\Region;
+use App\Http\Requests\StoreMemberRequest;
+use App\Http\Requests\UpdateMemberRequest;
 use App\Models\LsaLevel;
-use App\Models\Suffix;
+use App\Models\Member;
 use App\Models\Province;
+use App\Models\Region;
+use App\Models\Suffix;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Storage;
 
 class MemberController extends Controller
 {
+    /**
+     * Display a listing of members.
+     */
     public function index(Request $request)
     {
         $user = auth()->user();
+
+        if ($user->role === 'Member') {
+            return redirect()->route('member.profile.show');
+        }
+
+        $this->authorize('viewAny', Member::class);
+
         $search = $request->input('search');
+        $isRegionalUser = in_array($user->role, ['President', 'Coordinator']);
 
-        // 1. Fetch the regions based on the user's role/jurisdiction
-        // If the user has a 'region_id', they are restricted to that region.
-        // If not (Admin), they get all regions.
-        $regions = Region::when($user->region_id, function ($query) use ($user) {
-            return $query->where('id', $user->region_id);
-        })->get();
+        $regions = Region::when($isRegionalUser, fn ($q) => $q->where('id', $user->region_id))->get();
 
-        // 2. Fetch members, applying the same regional restriction and search filter
         $members = Member::with(['region', 'organization'])
-            ->when($user->region_id, function ($query) use ($user) {
-                return $query->where('region_id', $user->region_id);
-            })
+            ->when($isRegionalUser, fn ($q) => $q->where('region_id', $user->region_id))
             ->when($search, function ($query) use ($search) {
-                return $query->where(function ($q) use ($search) {
+                $query->where(function ($q) use ($search) {
                     $q->where('first_name', 'like', "%{$search}%")
                         ->orWhere('last_name', 'like', "%{$search}%")
                         ->orWhere('email', 'like', "%{$search}%");
@@ -38,75 +45,56 @@ class MemberController extends Controller
             })
             ->paginate(15);
 
-        // 3. Pass both $members AND $regions to the view
         return view('members.index', compact('members', 'regions'));
     }
 
+    /**
+     * Show form to create a new member.
+     */
     public function create()
     {
+        $this->authorize('create', Member::class);
+
         $user = auth()->user();
-        $query = Region::with(['provinces', 'organizations'])->orderBy('id');
+        $isRegionalUser = in_array($user->role, ['President', 'Coordinator']);
 
-        // ROLE SCOPING: Only show their region in the dropdown
-        if (in_array($user->role, ['President', 'Coordinator'])) {
-            $query->where('id', $user->region_id);
-        }
-
-        $regions = $query->get();
-        $lsaLevels = LsaLevel::all();
-        $suffixes = Suffix::all();
+        $regions = Region::with(['provinces', 'organizations'])
+            ->when($isRegionalUser, fn ($q) => $q->where('id', $user->region_id))
+            ->orderBy('id')
+            ->get();
 
         return view('members.create', [
-            'regions' => $regions,
-            'userRegionId' => auth()->user()->region_id ?? '', // Adjust field name to your DB
+            'regions'      => $regions,
+            'lsaLevels'    => LsaLevel::all(),
+            'suffixes'     => Suffix::all(),
+            'userRegionId' => $user->region_id ?? '',
         ]);
     }
 
-    public function show($id)
+    /**
+     * Store a newly created member in storage.
+     */
+    public function store(StoreMemberRequest $request)
     {
-        $member = Member::with(['region', 'province'])->findOrFail($id);
+        $this->authorize('create', Member::class);
 
-        // Security check
-        if (auth()->user()->role !== 'Admin' && $member->region_id !== auth()->user()->region_id) {
-            abort(403, 'Unauthorized action.');
+        $validated = $request->validated();
+
+        $validated['crops'] = $request->input('crops', []);
+        $validated['services'] = $request->input('services', []);
+        $validated['farm_equipment'] = $request->input('farm_equipment', []);
+
+        if ($request->hasFile('member_file')) {
+            $validated['member_file_path'] = $request->file('member_file')->store('member_files', 'public');
         }
 
-        // Generate the QR content using the NEW formatted member_id
-        // We use the member_id column we just created
-        $qrData = route('members.show', $member->id);
-
-        return view('members.id', compact('member', 'qrData'));
-    }
-
-    public function store(Request $request)
-    {
-        // 1. Handle "Others" for Member Type and Training Course before validation
-        if ($request->member_type_select === 'Others') {
-            $request->merge(['member_type' => $request->other_member_type]);
-        } else {
-            $request->merge(['member_type' => $request->member_type_select]);
-        }
-
-        if ($request->training_type_select === 'Others') {
-            $request->merge(['training_course' => $request->other_training]);
-        } else {
-            $request->merge(['training_course' => $request->training_type_select]);
-        }
-
-        // 2. Validate
-        $validated = $this->validateMember($request);
-
-        // 3. Process Arrays for Database (if not using Eloquent $casts)
-        $validated['crops'] = $request->has('crops') ? json_encode($request->crops) : json_encode([]);
-        $validated['services'] = $request->has('services') ? json_encode($request->services) : json_encode([]);
-
-        // 4. Generate Member ID (Logic remains the same)
+        // Unique Member UID generation
         $currentYear = now()->year;
         $regionId = $validated['region_id'];
         $count = Member::where('region_id', $regionId)->whereYear('created_at', $currentYear)->count() + 1;
 
         $validated['member_id'] = sprintf(
-            "4H-PH-%s-%s-%s-%04d",
+            '4H-PH-%s-%s-%s-%04d',
             str_pad($regionId, 2, '0', STR_PAD_LEFT),
             $currentYear,
             str_pad($regionId, 3, '0', STR_PAD_LEFT),
@@ -119,37 +107,62 @@ class MemberController extends Controller
             ->with('success', "Member registered successfully! ID: {$validated['member_id']}");
     }
 
-    public function edit(Member $member)
+    /**
+     * Display member ID preview / QR card.
+     */
+    public function show(Member $member)
     {
-        // Security check
-        if (auth()->user()->role !== 'Admin' && $member->region_id !== auth()->user()->region_id) {
-            abort(403);
-        }
+        $this->authorize('view', $member);
 
-        $user = auth()->user();
-        $regionQuery = Region::with('provinces');
+        $member->load(['region', 'province', 'organization']);
+        $qrData = route('members.show', $member->id);
 
-        if (in_array($user->role, ['President', 'Coordinator'])) {
-            $regionQuery->where('id', $user->region_id);
-        }
-
-        $regions = $regionQuery->get();
-        $provinces = Province::where('region_id', $member->region_id)->get();
-        $suffixes = Suffix::all();
-        $lsaLevels = LsaLevel::all();
-
-        return view('members.edit', compact('member', 'regions', 'provinces', 'suffixes', 'lsaLevels'));
+        return view('members.id', compact('member', 'qrData'));
     }
 
-    public function update(Request $request, Member $member)
+    /**
+     * Show form to edit member record.
+     */
+    public function edit(Member $member)
     {
-        $validated = $this->validateMember($request, $member->id);
+        $this->authorize('update', $member);
+
+        $user = auth()->user();
+        $isRegionalUser = in_array($user->role, ['President', 'Coordinator']);
+
+        $regions = Region::with('provinces')
+            ->when($isRegionalUser, fn ($q) => $q->where('id', $user->region_id))
+            ->get();
+
+        $provinces = Province::where('region_id', $member->region_id)->get();
+
+        return view('members.edit', [
+            'member'    => $member,
+            'regions'   => $regions,
+            'provinces' => $provinces,
+            'suffixes'  => Suffix::all(),
+            'lsaLevels' => LsaLevel::all(),
+        ]);
+    }
+
+    /**
+     * Update specified member in storage.
+     */
+    public function update(UpdateMemberRequest $request, Member $member)
+    {
+        Gate::authorize('update', $member);
+
+        $validated = $request->validated();
 
         $validated['crops'] = $request->input('crops', []);
         $validated['services'] = $request->input('services', []);
+        $validated['farm_equipment'] = $request->input('farm_equipment', []);
 
-        if ($request->training_type_select === 'Others') {
-            $validated['training_course'] = $request->other_training;
+        if ($request->hasFile('member_file')) {
+            if ($member->member_file_path && Storage::disk('public')->exists($member->member_file_path)) {
+                Storage::disk('public')->delete($member->member_file_path);
+            }
+            $validated['member_file_path'] = $request->file('member_file')->store('member_files', 'public');
         }
 
         $member->update($validated);
@@ -158,118 +171,240 @@ class MemberController extends Controller
             ->with('success', 'Member record updated successfully!');
     }
 
-    public function updateSelf(Request $request)
-    {
-        $member = auth()->user()->member; // Using the relationship
-
-        $request->validate([
-            'full_name' => 'required|string|max:255',
-            'contact_no' => 'required',
-        ]);
-
-        $member->update($request->only(['full_name', 'contact_no', 'address']));
-
-        return back()->with('success', 'Your profile has been updated!');
-    }
-
+    /**
+     * Remove member from storage.
+     */
     public function destroy(Member $member)
     {
-        if (auth()->user()->role !== 'Admin' && $member->region_id !== auth()->user()->region_id) {
-            abort(403);
+        $this->authorize('delete', $member);
+
+        if ($member->member_file_path && Storage::disk('public')->exists($member->member_file_path)) {
+            Storage::disk('public')->delete($member->member_file_path);
         }
 
         $member->delete();
+
         return redirect()->route('members.index')->with('success', 'Member deleted!');
     }
 
-    public function downloadIdCard($id)
+    /**
+     * Download member PDF ID Card.
+     */
+    public function downloadIdCard(Member $member)
     {
-        $member = Member::with(['region', 'province'])->findOrFail($id);
+        $this->authorize('view', $member);
 
-        if (auth()->user()->role !== 'Admin' && $member->region_id !== auth()->user()->region_id) {
-            abort(403);
-        }
+        $member->load(['region', 'province']);
 
         $pdf = Pdf::loadView('members.pdf-id', compact('member'))
-            ->setPaper([0, 0, 250, 400], 'portrait');
+            ->setPaper([0, 0, 250, 400], 'portrait')
+            ->setOptions([
+                'isHtml5ParserEnabled' => true,
+                'isRemoteEnabled'      => true,
+            ]);
 
-        return $pdf->download($member->last_name . '-LSA-ID.pdf');
+        return $pdf->download("{$member->last_name}-LSA-ID.pdf");
     }
 
-    public function verify(Request $request)
+    /**
+     * Verify member account status.
+     */
+    public function verify(Member $member)
     {
-        // 1. Fetch the member using the unique member_id passed from the button
-        $member = Member::where('member_id', $request->query('member_id'))->firstOrFail();
-        $user = auth()->user();
+        $this->authorize('verify', $member);
 
-        // 2. Security: Presidents and Coordinators are restricted to their own region
-        if (in_array($user->role, ['President', 'Coordinator'])) {
-            if ($member->region_id !== $user->region_id) {
-                return back()->with('error', 'Unauthorized: You can only verify members within your region.');
-            }
-        }
-
-        // 3. Mark as Verified (Update the timestamp)
         $member->update([
             'verified_at' => now(),
-            'verified_by' => $user->id // Optional: track who did the verification
+            'verified_by' => auth()->id(),
         ]);
 
-        // 4. Redirect to the profile with a success toast
-        return redirect()->route('members.show', $member->id)
+        return redirect()->route('members.show', $member)
             ->with('success', "Account for {$member->first_name} has been officially verified.");
     }
 
-    protected function validateMember(Request $request, $id = null)
+    // =========================================================================
+    // MEMBER SELF-SERVICE METHODS
+    // =========================================================================
+
+    /**
+     * Display authenticated member's own profile overview.
+     * Route: member.profile.show
+     */
+    public function showProfile()
     {
         $user = auth()->user();
 
-        // FORCED REGION: If not admin, overwrite the region_id to the user's region
-        // This prevents users from trying to submit data for other regions via DevTools
-        if (in_array($user->role, ['President', 'Coordinator'])) {
-            $request->merge(['region_id' => $user->region_id]);
+        $member = Member::with(['region', 'province', 'organization'])
+            ->where('email', $user->email)
+            ->firstOrFail();
+
+        $this->authorize('view', $member);
+
+        return view('members.show', compact('user', 'member'));
+    }
+
+    /**
+     * Display authenticated member's Agri-Resume preview.
+     * Route: member.agri-resume.preview
+     */
+    public function showAgriResumePreview()
+    {
+        $user = auth()->user();
+
+        $member = Member::with(['region', 'province', 'organization'])
+            ->where('email', $user->email)
+            ->firstOrFail();
+
+        $this->authorize('view', $member);
+
+        return view('members.agri-resume-preview', compact('user', 'member'));
+    }
+
+    /**
+     * Display Agri-Resume preview for a specific member (Admin/Coordinator/President access).
+     * Route: members.agri-resume
+     */
+    public function showMemberAgriResume(Member $member)
+    {
+        $this->authorize('view', $member);
+
+        $user = auth()->user();
+        $member->load(['region', 'province', 'organization']);
+
+        return view('members.agri-resume-preview', compact('user', 'member'));
+    }
+
+    /**
+     * Show form for current user to edit their profile details.
+     */
+    public function editProfile()
+    {
+        $user = auth()->user();
+
+        $member = Member::with(['region', 'province', 'organization'])
+            ->where('email', $user->email)
+            ->firstOrFail();
+
+        $this->authorize('update', $member);
+
+        $regions = Region::all();
+        $provinces = Province::where('region_id', $member->region_id)->get();
+
+        return view('members.edit', compact('user', 'member', 'regions', 'provinces'));
+    }
+
+    /**
+     * Update authenticated member's profile details.
+     */
+    public function updateProfile(Request $request)
+    {
+        $user = auth()->user();
+        $member = Member::where('email', $user->email)->firstOrFail();
+
+        $this->authorize('update', $member);
+
+        $validated = $request->validate([
+            'contact_no'           => 'required|string|max:20',
+            'occupation'           => 'nullable|string|max:255',
+            'specialization'       => 'required|string',
+            'city_municipality'    => 'required|string',
+            'barangay'             => 'required|string',
+            'zip_code'             => 'nullable|string|max:4',
+            'highest_education'    => 'nullable|string|max:100',
+            'degree_course'        => 'nullable|string|max:150',
+            'school_name'          => 'nullable|string|max:200',
+            'land_ownership'       => 'nullable|string',
+            'farm_area'            => 'nullable|string|max:50',
+            'is_rsbsa_registered'  => 'nullable|boolean',
+            'rsbsa_no'             => 'nullable|string|max:50',
+            'farm_equipment'       => 'nullable|array',
+            'farm_equipment.*'     => 'string',
+            'agri_skills'          => 'nullable|string|max:1000',
+            'certifications'       => 'nullable|string|max:255',
+            'member_file'          => 'nullable|file|mimes:pdf,doc,docx|max:5120',
+        ]);
+
+        if ($request->hasFile('member_file')) {
+            if ($member->member_file_path && Storage::disk('public')->exists($member->member_file_path)) {
+                Storage::disk('public')->delete($member->member_file_path);
+            }
+            $validated['member_file_path'] = $request->file('member_file')->store('member_files', 'public');
         }
 
-        $maxAgeDate = now()->subYears(30)->format('Y-m-d');
-        // "Not less than 10" means they must be born before this date
-        $minAgeDate = now()->subYears(10)->format('Y-m-d');
+        $member->update($validated);
 
-        return $request->validate([
-            'last_name' => 'required|string|max:255',
-            'first_name' => 'required|string|max:255',
-            'middle_name' => 'nullable|string|max:255',
-            'suffix' => 'nullable|string',
-            'sex' => 'required|in:Male,Female',
-            'civil_status' => 'required|string',
-            'dob' => [
-                'required',
-                'date',
-                "after_or_equal:$maxAgeDate",
-                "before_or_equal:$minAgeDate",
-            ],
-            'contact_no' => 'required|string|max:20',
-            'email' => 'required|email|unique:members,email,' . $id,
-            'region_id' => 'required|exists:regions,id',
-            'province_id' => 'required|exists:provinces,id',
-            'city_municipality' => 'required|string',
-            'district' => 'nullable|string',
-            'barangay' => 'required|string',
-            'zip_code' => 'nullable|string|max:4',
-            'member_type' => 'required|string',
-            'occupation' => 'nullable|string|max:255',
-            'organization_id' => 'nullable|exists:organizations,id',
-            'specialization' => 'required|string',
-            'hvcdp_category' => 'nullable|required_if:specialization,HVCDP,Combination|string',
-            'crops' => 'nullable|array',
-            'services' => 'required|array',
-            'internship' => 'nullable|string',
-            'scholarship' => 'nullable|string',
-            'lsa_level' => 'nullable|string',
-            'lsa_type' => 'nullable|string',
-            'training_course' => 'nullable|string',
-        ], [
-            'dob.after_or_equal' => 'The member must be 30 years old or younger.',
-            'dob.before_or_equal' => 'The member must be at least 10 years old.',
-        ]);
+        return redirect()->route('member.profile.show')
+            ->with('success', 'Your member details have been updated successfully.');
+    }
+
+    /**
+     * Export Member Data PDF report.
+     */
+    public function downloadProfilePdf(Request $request)
+    {
+        $user = auth()->user();
+
+        $member = Member::with(['region', 'province', 'organization'])
+            ->where('email', $user->email)
+            ->first();
+
+        if (!$member) {
+            return back()->with('error', 'No Member record found matching email: ' . $user->email);
+        }
+
+        $this->authorize('view', $member);
+
+        return $this->generatePdfResponse($member);
+    }
+
+    /**
+     * Admin view to inspect individual member profile.
+     */
+    public function showMemberData(Member $member)
+    {
+        $this->authorize('view', $member);
+
+        $user = auth()->user();
+        $member->load(['region', 'province', 'organization']);
+
+        $regions = Region::all();
+        $provinces = Province::where('region_id', $member->region_id)->get();
+
+        return view('members.edit', compact('user', 'member', 'regions', 'provinces'));
+    }
+
+    /**
+     * Download uploaded attachment file for member.
+     */
+    public function downloadUploadedFile(Member $member)
+    {
+        $this->authorize('view', $member);
+
+        if (!$member->member_file_path || !Storage::disk('public')->exists($member->member_file_path)) {
+            return back()->with('error', 'Uploaded member file not found.');
+        }
+
+        return Storage::disk('public')->download($member->member_file_path);
+    }
+
+    /**
+     * Helper to generate Member Profile PDF download via DomPDF.
+     */
+    protected function generatePdfResponse(Member $member)
+    {
+        $pdfView = view()->exists('members.pdf-profile') ? 'members.pdf-profile' : 'members.pdf-id';
+
+        if (!view()->exists($pdfView)) {
+            abort(404, 'PDF view template not found.');
+        }
+
+        $pdf = Pdf::loadView($pdfView, compact('member'))
+            ->setPaper('a4', 'portrait')
+            ->setOptions([
+                'isHtml5ParserEnabled' => true,
+                'isRemoteEnabled'      => true,
+            ]);
+
+        return $pdf->download("Member-Data-{$member->last_name}.pdf");
     }
 }

@@ -2,36 +2,37 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
+use App\Http\Requests\StoreOrganizationRequest;
+use App\Http\Requests\UpdateOrganizationRequest;
 use App\Models\Organization;
 use App\Models\Region;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class OrganizationController extends Controller
 {
     public function index(Request $request)
     {
+        $this->authorize('viewAny', Organization::class);
+
         $user = auth()->user();
-        $query = Organization::query()->with('region');
+        $isAdmin = $user->hasRole('Admin') || $user->hasRole('admin') || strtolower($user->role ?? '') === 'admin';
 
-        // Filter by Search (Name or Acronym)
-        if ($request->filled('search')) {
-            $query->where(function ($q) use ($request) {
-                $q->where('name', 'like', '%' . $request->search . '%')
-                    ->orWhere('acronym', 'like', '%' . $request->search . '%');
-            });
-        }
+        $organizations = Organization::query()
+            ->with('region')
+            ->when($request->filled('search'), function ($q) use ($request) {
+                $search = $request->search;
+                $q->where(function ($query) use ($search) {
+                    $query->where('name', 'like', "%{$search}%")
+                        ->orWhere('acronym', 'like', "%{$search}%");
+                });
+            })
+            ->when(!$isAdmin, fn ($q) => $q->where('region_id', $user->region_id))
+            ->when($request->filled('region'), fn ($q) => $q->where('region_id', $request->region))
+            ->latest()
+            ->paginate(10)
+            ->withQueryString();
 
-        if ($user->role !== 'admin') {
-            $query->where('region_id', $user->region_id);
-        }
-
-        // Filter by Region
-        if ($request->filled('region')) {
-            $query->where('region_id', $request->region);
-        }
-
-        // Get the results
-        $organizations = $query->latest()->paginate(10)->withQueryString();
         $regions = Region::all();
 
         return view('organizations.index', compact('organizations', 'regions'));
@@ -39,54 +40,61 @@ class OrganizationController extends Controller
 
     public function create()
     {
-        // 1. Fetch regions for the dropdown
-        $regions = Region::orderBy('id', 'asc')->get();
+        $this->authorize('create', Organization::class);
 
-        // 2. Fetch existing organizations to fix the "Undefined variable" error
-        // We use with('region') to eager load the relationship and avoid N+1 issues
-        $organizations = Organization::with('region')->orderBy('created_at', 'desc')->get();
+        $regions = Region::orderBy('id', 'asc')->get();
+        $organizations = Organization::with('region')->latest()->get();
 
         return view('organizations.create', compact('regions', 'organizations'));
     }
 
-    /**
-     * Store a newly created organization in storage.
-     */
-    public function store(Request $request)
+    public function store(StoreOrganizationRequest $request)
     {
-        $user = auth()->user();
+        $validated = $request->validated();
 
-        // 1. Basic Validation
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'acronym' => 'nullable|string|max:20',
-            'category' => 'required|in:LGU,PO,NGO,Academe',
-            'region_id' => 'required|exists:regions,id',
-        ]);
-
-        // 2. Security Check: Enforce Regional Restriction
-        if (!$user->hasRole('admin')) {
-            if ($request->region_id != $user->region_id) {
-                return back()->withErrors(['region_id' => 'You are only authorized to add organizations for your own region.']);
-            }
+        if ($request->hasFile('certification')) {
+            $validated['certification_path'] = $request->file('certification')
+                ->store('certifications', 'public');
         }
 
-        // 3. Create the record
         Organization::create($validated);
 
-        return redirect()->route('organizations.index')->with('success', 'Organization registered successfully.');
+        return redirect()->route('organizations.index')
+            ->with('success', 'Organization registered successfully.');
     }
 
-    public function update(Request $request, Organization $organization)
+    public function update(UpdateOrganizationRequest $request, Organization $organization)
     {
-        $validated = $request->validate([
-            'region_id' => 'required|exists:regions,id',
-            'name' => 'required|string|max:255|unique:organizations,name,' . $organization->id,
-            'acronym' => 'nullable|string|max:50',
-        ]);
-
-        $organization->update($validated);
+        $organization->update($request->validated());
 
         return back()->with('success', 'Organization updated successfully.');
+    }
+
+    public function showCertification(Organization $organization)
+    {
+        $this->authorize('viewCertification', $organization);
+
+        if (!$organization->certification_path || !Storage::disk('public')->exists($organization->certification_path)) {
+            abort(404, 'Certification document not found.');
+        }
+
+        return Storage::disk('public')->response(
+            $organization->certification_path,
+            "{$organization->acronym}_certification.pdf",
+            ['Content-Type' => 'application/pdf']
+        );
+    }
+
+    public function toggleVerify(Organization $organization)
+    {
+        $this->authorize('toggleVerify', $organization);
+
+        $organization->update([
+            'is_verified' => !$organization->is_verified,
+        ]);
+
+        $status = $organization->is_verified ? 'verified' : 'unverified';
+
+        return back()->with('success', "Organization {$status} successfully!");
     }
 }

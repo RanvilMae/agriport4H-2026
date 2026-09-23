@@ -28,16 +28,19 @@ class AuthenticatedSessionController extends Controller
 
         // Check if the user is accepted
         if (!Auth::user()->is_accepted) {
-            // Use the Web Guard explicitly to avoid "unknown method" errors
+            // Explicitly logout unapproved users
             Auth::guard('web')->logout();
 
-            // Clean up session data immediately for security
+            // Clean up session state
             $request->session()->invalidate();
             $request->session()->regenerateToken();
 
-            return redirect()->route('login')->withErrors([
-                'email' => 'Your account is pending admin approval. Please contact your Region Coordinator or President.',
-            ]);
+            // FIX: Redirect back with input and errors instead of redirecting to named route
+            return back()
+                ->withInput($request->only('email'))
+                ->withErrors([
+                    'email' => 'Your account is pending admin approval. Please contact your Region Coordinator or President.',
+                ]);
         }
 
         $request->session()->regenerate();
@@ -56,6 +59,6 @@ class AuthenticatedSessionController extends Controller
 
         $request->session()->regenerateToken();
 
-        return redirect('/');
+        return redirect()->route('login');
     }
 }

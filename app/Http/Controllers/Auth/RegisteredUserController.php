@@ -4,11 +4,11 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
-use App\Models\Region; // Import the Region model
+use App\Models\Member;
+use App\Models\Region;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rules;
 use Illuminate\View\View;
@@ -33,14 +33,23 @@ class RegisteredUserController extends Controller
      */
     public function store(Request $request): RedirectResponse
     {
-        // 1. Validate all incoming fields
+        // 1. Validate all incoming fields including member_id pre-check
         $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'lowercase', 'email', 'max:255', 'unique:' . User::class],
-            'password' => ['required', 'confirmed', Rules\Password::defaults()],
-            'role' => ['required', 'in:Admin,Coordinator,Member,President'],
+            'member_id' => [
+                'required',
+                'string',
+                'exists:members,member_id', // Must exist in the members table
+                'unique:users,member_id',   // Must not already be registered in the users table
+            ],
+            'name'      => ['required', 'string', 'max:255'],
+            'email'     => ['required', 'string', 'lowercase', 'email', 'max:255', 'unique:' . User::class],
+            'password'  => ['required', 'confirmed', Rules\Password::defaults()],
+            'role'      => ['required', 'in:Admin,Coordinator,Member,President'],
             'region_id' => ['required_if:role,Coordinator,President,Member', 'nullable', 'exists:regions,id'],
-            'position' => ['nullable', 'string', 'max:255'],
+            'position'  => ['nullable', 'string', 'max:255'],
+        ], [
+            'member_id.exists' => 'The provided Member ID is not recognized in our member records.',
+            'member_id.unique' => 'This Member ID is already registered with a user account.',
         ]);
 
         // 2. Prevent duplicate role/position assignments in the same region
@@ -57,20 +66,23 @@ class RegisteredUserController extends Controller
             }
         }
 
-        // 3. Create the user
+        // 3. Create the user with member_id
         $user = User::create([
-            'name' => $request->name,
-            'email' => $request->email,
-            'password' => Hash::make($request->password),
-            'role' => $request->role,
+            'member_id' => $request->member_id,
+            'name'      => $request->name,
+            'email'     => $request->email,
+            'password'  => Hash::make($request->password),
+            'role'      => $request->role,
             'region_id' => $request->region_id,
-            'position' => $request->position,
+            'position'  => $request->position,
         ]);
 
         event(new Registered($user));
 
-        // NOTE: I removed Auth::login($user) so the current user 
-        // (the one doing the registering) stays logged in.
+        // 4. Optionally sync user_id back to the members record if needed
+        Member::where('member_id', $request->member_id)->update([
+            'user_id' => $user->id,
+        ]);
 
         // Redirect back to the registration page with the success message
         return redirect()->route('register')
