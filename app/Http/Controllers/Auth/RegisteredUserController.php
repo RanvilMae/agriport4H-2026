@@ -3,12 +3,14 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
-use App\Models\User;
 use App\Models\Member;
 use App\Models\Region;
+use App\Models\User;
 use Illuminate\Auth\Events\Registered;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rules;
 use Illuminate\View\View;
@@ -33,23 +35,15 @@ class RegisteredUserController extends Controller
      */
     public function store(Request $request): RedirectResponse
     {
-        // 1. Validate all incoming fields including member_id pre-check
+        // 1. Validate incoming fields (member_id is generated automatically
+        //    by the User model, so the form no longer sends it)
         $request->validate([
-            'member_id' => [
-                'required',
-                'string',
-                'exists:members,member_id', // Must exist in the members table
-                'unique:users,member_id',   // Must not already be registered in the users table
-            ],
             'name'      => ['required', 'string', 'max:255'],
             'email'     => ['required', 'string', 'lowercase', 'email', 'max:255', 'unique:' . User::class],
             'password'  => ['required', 'confirmed', Rules\Password::defaults()],
             'role'      => ['required', 'in:Admin,Coordinator,Member,President'],
             'region_id' => ['required_if:role,Coordinator,President,Member', 'nullable', 'exists:regions,id'],
             'position'  => ['nullable', 'string', 'max:255'],
-        ], [
-            'member_id.exists' => 'The provided Member ID is not recognized in our member records.',
-            'member_id.unique' => 'This Member ID is already registered with a user account.',
         ]);
 
         // 2. Prevent duplicate role/position assignments in the same region
@@ -66,26 +60,87 @@ class RegisteredUserController extends Controller
             }
         }
 
-        // 3. Create the user with member_id
-        $user = User::create([
-            'member_id' => $request->member_id,
-            'name'      => $request->name,
-            'email'     => $request->email,
-            'password'  => Hash::make($request->password),
-            'role'      => $request->role,
-            'region_id' => $request->region_id,
-            'position'  => $request->position,
-        ]);
+        // 3. Create the user AND their member profile together.
+        //    User::booted() assigns the Member ID (e.g. 4H-I-2026-000-001).
+        //    The transaction means that if the profile fails to save, the user
+        //    is not created either, so we never end up with half an account.
+        //    If two people register at the same instant and get the same ID,
+        //    the unique index rejects one and we retry with the next number.
+        $user = null;
+
+        for ($attempt = 1; $attempt <= 3; $attempt++) {
+            try {
+                $user = DB::transaction(function () use ($request) {
+                    $user = User::create([
+                        'name'      => $request->name,
+                        'email'     => $request->email,
+                        'password'  => Hash::make($request->password),
+                        'role'      => $request->role,
+                        'region_id' => $request->region_id,
+                        'position'  => $request->position,
+                    ]);
+
+                    [$firstName, $lastName] = self::splitName($request->name);
+
+                    // Starter profile; the member completes the rest on
+                    // the profile edit page.
+                    Member::forceCreate([
+                        'user_id'    => $user->id,
+                        'member_id'  => $user->member_id,
+                        'first_name' => $firstName,
+                        'last_name'  => $lastName,
+                        'email'      => $user->email,
+                        'region_id'  => $user->region_id,
+                    ]);
+
+                    return $user;
+                });
+                break;
+            } catch (UniqueConstraintViolationException $e) {
+                if ($attempt === 3) {
+                    throw $e;
+                }
+            }
+        }
 
         event(new Registered($user));
 
-        // 4. Optionally sync user_id back to the members record if needed
-        Member::where('member_id', $request->member_id)->update([
-            'user_id' => $user->id,
-        ]);
-
         // Redirect back to the registration page with the success message
         return redirect()->route('register')
-            ->with('success', 'Account has been registered successfully! Contact your president for activation of your account.');
+            ->with('success', "Account registered! Your Member ID is {$user->member_id}. Contact your president for activation of your account.");
+    }
+
+    /**
+     * Split a full name into [first name, last name].
+     *
+     * Handles Filipino surname particles, so "Juan Dela Cruz" becomes
+     * ["Juan", "Dela Cruz"] and "Maria Clara Santos" becomes
+     * ["Maria Clara", "Santos"].
+     */
+    public static function splitName(string $fullName): array
+    {
+        $parts = preg_split('/\s+/', trim($fullName));
+
+        if (count($parts) === 1) {
+            return [$parts[0], ''];
+        }
+
+        $particles = ['de', 'dela', 'del', 'della', 'delos', 'san', 'santa', 'sta.', 'sto.', 'santo', 'la', 'los'];
+
+        // Surname starts at the first particle after the first word, if any
+        for ($i = 1; $i < count($parts) - 1; $i++) {
+            if (in_array(strtolower($parts[$i]), $particles, true)) {
+                return [
+                    implode(' ', array_slice($parts, 0, $i)),
+                    implode(' ', array_slice($parts, $i)),
+                ];
+            }
+        }
+
+        // Otherwise the last word is the surname
+        return [
+            implode(' ', array_slice($parts, 0, -1)),
+            end($parts),
+        ];
     }
 }

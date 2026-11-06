@@ -6,16 +6,54 @@ use App\Http\Requests\StoreMemberRequest;
 use App\Http\Requests\UpdateMemberRequest;
 use App\Models\LsaLevel;
 use App\Models\Member;
+use App\Models\Organization;
 use App\Models\Province;
 use App\Models\Region;
 use App\Models\Suffix;
+use App\Models\User;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Storage;
 
 class MemberController extends Controller
 {
+    /**
+     * Validation rule for the profile photo upload (JPG/PNG/WEBP, max 2 MB).
+     */
+    private const PHOTO_RULES = ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:2048'];
+
+    /**
+     * Oldest allowed age for a member, counted by birth year.
+     */
+    public const MAX_AGE = 30;
+
+    /**
+     * Date of birth rules: a real past date, born no earlier than
+     * January 1 of (current year - 30).
+     */
+    private function dobRules(): array
+    {
+        $earliest = now()->year - self::MAX_AGE;
+
+        return ['nullable', 'date', 'before:today', "after_or_equal:{$earliest}-01-01"];
+    }
+
+    /**
+     * Friendly messages for the date of birth rules.
+     */
+    private function dobMessages(): array
+    {
+        $earliest = now()->year - self::MAX_AGE;
+
+        return [
+            'dob.after_or_equal' => 'Members must be ' . self::MAX_AGE . " years old or younger (born in {$earliest} or later).",
+            'dob.before'         => 'Date of birth must be in the past.',
+            'dob.date'           => 'Please enter a valid date of birth.',
+        ];
+    }
+
     /**
      * Display a listing of members.
      */
@@ -78,6 +116,11 @@ class MemberController extends Controller
     {
         $this->authorize('create', Member::class);
 
+        $request->validate(
+            ['photo' => self::PHOTO_RULES, 'dob' => $this->dobRules()],
+            $this->dobMessages()
+        );
+
         $validated = $request->validated();
 
         $validated['crops'] = $request->input('crops', []);
@@ -85,21 +128,15 @@ class MemberController extends Controller
         $validated['farm_equipment'] = $request->input('farm_equipment', []);
 
         if ($request->hasFile('member_file')) {
-            $validated['member_file_path'] = $request->file('member_file')->store('member_files', 'public');
+            $validated['agri_resume_path'] = $request->file('member_file')->store('member_files', 'public');
         }
 
-        // Unique Member UID generation
-        $currentYear = now()->year;
-        $regionId = $validated['region_id'];
-        $count = Member::where('region_id', $regionId)->whereYear('created_at', $currentYear)->count() + 1;
+        if ($request->hasFile('photo')) {
+            $validated['photo_path'] = $this->storePhoto($request->file('photo'));
+        }
 
-        $validated['member_id'] = sprintf(
-            '4H-PH-%s-%s-%s-%04d',
-            str_pad($regionId, 2, '0', STR_PAD_LEFT),
-            $currentYear,
-            str_pad($regionId, 3, '0', STR_PAD_LEFT),
-            $count
-        );
+        // Same Member ID format as self-registration: 4H-{RegionCode}-{Year}-000-000
+        $validated['member_id'] = User::generateMemberId($validated['region_id'] ?? null);
 
         Member::create($validated);
 
@@ -134,14 +171,14 @@ class MemberController extends Controller
             ->when($isRegionalUser, fn ($q) => $q->where('id', $user->region_id))
             ->get();
 
-        $provinces = Province::where('region_id', $member->region_id)->get();
-
         return view('members.edit', [
-            'member'    => $member,
-            'regions'   => $regions,
-            'provinces' => $provinces,
-            'suffixes'  => Suffix::all(),
-            'lsaLevels' => LsaLevel::all(),
+            'member'        => $member,
+            'regions'       => $regions,
+            // All provinces/organizations; the form filters them by the chosen region
+            'provinces'     => Province::orderBy('name')->get(),
+            'organizations' => Organization::orderBy('name')->get(),
+            'suffixes'      => Suffix::all(),
+            'lsaLevels'     => LsaLevel::all(),
         ]);
     }
 
@@ -152,6 +189,11 @@ class MemberController extends Controller
     {
         Gate::authorize('update', $member);
 
+        $request->validate(
+            ['photo' => self::PHOTO_RULES, 'dob' => $this->dobRules()],
+            $this->dobMessages()
+        );
+
         $validated = $request->validated();
 
         $validated['crops'] = $request->input('crops', []);
@@ -159,10 +201,13 @@ class MemberController extends Controller
         $validated['farm_equipment'] = $request->input('farm_equipment', []);
 
         if ($request->hasFile('member_file')) {
-            if ($member->member_file_path && Storage::disk('public')->exists($member->member_file_path)) {
-                Storage::disk('public')->delete($member->member_file_path);
-            }
-            $validated['member_file_path'] = $request->file('member_file')->store('member_files', 'public');
+            $this->deleteFile($member->agri_resume_path);
+            $validated['agri_resume_path'] = $request->file('member_file')->store('member_files', 'public');
+        }
+
+        if ($request->hasFile('photo')) {
+            $this->deleteFile($member->photo_path);
+            $validated['photo_path'] = $this->storePhoto($request->file('photo'));
         }
 
         $member->update($validated);
@@ -178,9 +223,8 @@ class MemberController extends Controller
     {
         $this->authorize('delete', $member);
 
-        if ($member->member_file_path && Storage::disk('public')->exists($member->member_file_path)) {
-            Storage::disk('public')->delete($member->member_file_path);
-        }
+        $this->deleteFile($member->agri_resume_path);
+        $this->deleteFile($member->photo_path);
 
         $member->delete();
 
@@ -194,16 +238,69 @@ class MemberController extends Controller
     {
         $this->authorize('view', $member);
 
-        $member->load(['region', 'province']);
+        // No ID card until the member's profile is complete
+        if (! $member->canPrintId()) {
+            return back()->with('error',
+                "The ID for {$member->first_name} {$member->last_name} can't be printed yet. Missing: "
+                . implode(', ', $member->missingIdFields()) . '.'
+            );
+        }
 
-        $pdf = Pdf::loadView('members.pdf-id', compact('member'))
-            ->setPaper([0, 0, 250, 400], 'portrait')
+        $member->load(['region', 'province', 'organization']);
+
+        // Images are embedded directly so DomPDF never has to fetch URLs
+        $photo = $member->photo_path
+            ? $this->imageDataUri(storage_path('app/public/' . $member->photo_path))
+            : null;
+        $logo = $this->imageDataUri(public_path('images/logo.png'));
+
+        // QR code linking to the member's verification page
+        $qr = null;
+        if (class_exists(\SimpleSoftwareIO\QrCode\Facades\QrCode::class)) {
+            $svg = \SimpleSoftwareIO\QrCode\Facades\QrCode::format('svg')
+                ->size(240)
+                ->margin(0)
+                ->errorCorrection('M')
+                ->generate(route('members.show', $member));
+            $qr = 'data:image/svg+xml;base64,' . base64_encode($svg);
+        }
+
+        $pdf = Pdf::loadView('members.pdf-id', compact('member', 'photo', 'logo', 'qr'))
+            // CR80 / ATM card size: 85.6 x 54 mm (242.65 x 153.07 pt), front + back
+            ->setPaper([0, 0, 242.65, 153.07], 'portrait')
             ->setOptions([
                 'isHtml5ParserEnabled' => true,
-                'isRemoteEnabled'      => true,
+                'isRemoteEnabled'      => false,
+                'defaultFont'          => 'DejaVu Sans',
             ]);
 
-        return $pdf->download("{$member->last_name}-LSA-ID.pdf");
+        // Opens in the browser's PDF viewer, ready to print or save
+        return $pdf->stream("{$member->member_id}-ID-Card.pdf");
+    }
+
+    /**
+     * Turn a local image into a data URI DomPDF can embed.
+     * WEBP is converted to PNG because DomPDF can't always render it.
+     */
+    private function imageDataUri(?string $path): ?string
+    {
+        if (!$path || !is_file($path)) {
+            return null;
+        }
+
+        $mime = mime_content_type($path) ?: 'image/png';
+        $data = file_get_contents($path);
+
+        if ($mime === 'image/webp' && function_exists('imagecreatefromwebp')) {
+            $image = imagecreatefromwebp($path);
+            ob_start();
+            imagepng($image);
+            $data = ob_get_clean();
+            imagedestroy($image);
+            $mime = 'image/png';
+        }
+
+        return 'data:' . $mime . ';base64,' . base64_encode($data);
     }
 
     /**
@@ -234,9 +331,7 @@ class MemberController extends Controller
     {
         $user = auth()->user();
 
-        $member = Member::with(['region', 'province', 'organization'])
-            ->where('email', $user->email)
-            ->firstOrFail();
+        $member = $this->currentMember();
 
         $this->authorize('view', $member);
 
@@ -251,9 +346,7 @@ class MemberController extends Controller
     {
         $user = auth()->user();
 
-        $member = Member::with(['region', 'province', 'organization'])
-            ->where('email', $user->email)
-            ->firstOrFail();
+        $member = $this->currentMember();
 
         $this->authorize('view', $member);
 
@@ -281,16 +374,15 @@ class MemberController extends Controller
     {
         $user = auth()->user();
 
-        $member = Member::with(['region', 'province', 'organization'])
-            ->where('email', $user->email)
-            ->firstOrFail();
+        $member = $this->currentMember();
 
         $this->authorize('update', $member);
 
-        $regions = Region::all();
-        $provinces = Province::where('region_id', $member->region_id)->get();
+        $regions       = Region::orderBy('id')->get();
+        $provinces     = Province::orderBy('name')->get();
+        $organizations = Organization::orderBy('name')->get();
 
-        return view('members.edit', compact('user', 'member', 'regions', 'provinces'));
+        return view('members.edit', compact('user', 'member', 'regions', 'provinces', 'organizations'));
     }
 
     /**
@@ -298,12 +390,30 @@ class MemberController extends Controller
      */
     public function updateProfile(Request $request)
     {
-        $user = auth()->user();
-        $member = Member::where('email', $user->email)->firstOrFail();
+        $member = $this->currentMember();
 
         $this->authorize('update', $member);
 
         $validated = $request->validate([
+            // Identity (email is not editable here; it's tied to the login account)
+            'first_name'           => 'required|string|max:255',
+            'middle_name'          => 'nullable|string|max:255',
+            'last_name'            => 'required|string|max:255',
+            'suffix'               => 'nullable|string|max:20',
+            'sex'                  => 'nullable|in:Male,Female',
+            'civil_status'         => 'nullable|in:Single,Married,Widowed,Separated',
+            'dob'                  => $this->dobRules(),
+            'organization_id'      => 'nullable|exists:organizations,id',
+
+            // Location
+            'region_id'            => 'required|exists:regions,id',
+            'province_id'          => 'nullable|exists:provinces,id',
+
+            // Specialization details
+            'hvcdp_category'       => 'nullable|string|max:100',
+            'crops'                => 'nullable|array',
+            'crops.*'              => 'string',
+
             'contact_no'           => 'required|string|max:20',
             'occupation'           => 'nullable|string|max:255',
             'specialization'       => 'required|string',
@@ -322,13 +432,29 @@ class MemberController extends Controller
             'agri_skills'          => 'nullable|string|max:1000',
             'certifications'       => 'nullable|string|max:255',
             'member_file'          => 'nullable|file|mimes:pdf,doc,docx|max:5120',
-        ]);
+            'photo'                => self::PHOTO_RULES,
+        ], $this->dobMessages());
+
+        // Uploaded files are handled separately; they are not table columns
+        unset($validated['member_file'], $validated['photo']);
+
+        // Unticked checkboxes aren't sent, so clear lists explicitly
+        $validated['crops'] = $request->input('crops', []);
+        $validated['farm_equipment'] = $request->input('farm_equipment', []);
+
+        // RSBSA number only applies when registered
+        if (! $request->boolean('is_rsbsa_registered')) {
+            $validated['rsbsa_no'] = null;
+        }
 
         if ($request->hasFile('member_file')) {
-            if ($member->member_file_path && Storage::disk('public')->exists($member->member_file_path)) {
-                Storage::disk('public')->delete($member->member_file_path);
-            }
-            $validated['member_file_path'] = $request->file('member_file')->store('member_files', 'public');
+            $this->deleteFile($member->agri_resume_path);
+            $validated['agri_resume_path'] = $request->file('member_file')->store('member_files', 'public');
+        }
+
+        if ($request->hasFile('photo')) {
+            $this->deleteFile($member->photo_path);
+            $validated['photo_path'] = $this->storePhoto($request->file('photo'));
         }
 
         $member->update($validated);
@@ -342,17 +468,15 @@ class MemberController extends Controller
      */
     public function downloadProfilePdf(Request $request)
     {
-        $user = auth()->user();
-
-        $member = Member::with(['region', 'province', 'organization'])
-            ->where('email', $user->email)
-            ->first();
-
-        if (!$member) {
-            return back()->with('error', 'No Member record found matching email: ' . $user->email);
-        }
+        $member = $this->currentMember();
 
         $this->authorize('view', $member);
+
+        // Without a dedicated profile template this would print the ID card,
+        // so send it through the ID route, which checks the profile is complete.
+        if (! view()->exists('members.pdf-profile')) {
+            return $this->downloadIdCard($member);
+        }
 
         return $this->generatePdfResponse($member);
     }
@@ -367,10 +491,11 @@ class MemberController extends Controller
         $user = auth()->user();
         $member->load(['region', 'province', 'organization']);
 
-        $regions = Region::all();
-        $provinces = Province::where('region_id', $member->region_id)->get();
+        $regions       = Region::orderBy('id')->get();
+        $provinces     = Province::orderBy('name')->get();
+        $organizations = Organization::orderBy('name')->get();
 
-        return view('members.edit', compact('user', 'member', 'regions', 'provinces'));
+        return view('members.edit', compact('user', 'member', 'regions', 'provinces', 'organizations'));
     }
 
     /**
@@ -380,11 +505,11 @@ class MemberController extends Controller
     {
         $this->authorize('view', $member);
 
-        if (!$member->member_file_path || !Storage::disk('public')->exists($member->member_file_path)) {
+        if (!$member->agri_resume_path || !Storage::disk('public')->exists($member->agri_resume_path)) {
             return back()->with('error', 'Uploaded member file not found.');
         }
 
-        return Storage::disk('public')->download($member->member_file_path);
+        return Storage::disk('public')->download($member->agri_resume_path);
     }
 
     /**
@@ -406,5 +531,41 @@ class MemberController extends Controller
             ]);
 
         return $pdf->download("Member-Data-{$member->last_name}.pdf");
+    }
+
+    // =========================================================================
+    // MEMBER LOOKUP & FILE HELPERS
+    // =========================================================================
+
+    /**
+     * The member profile of the logged-in user.
+     * Matches on user_id first, falling back to email for older records.
+     */
+    private function currentMember(): Member
+    {
+        $user = auth()->user();
+
+        return Member::with(['region', 'province', 'organization'])
+            ->where(fn ($q) => $q->where('user_id', $user->id)->orWhere('email', $user->email))
+            ->orderByRaw('user_id = ? DESC', [$user->id])
+            ->firstOrFail();
+    }
+
+    /**
+     * Save a profile photo to storage/app/public/member-photos.
+     */
+    private function storePhoto(UploadedFile $photo): string
+    {
+        return $photo->store('member-photos', 'public');
+    }
+
+    /**
+     * Delete a file from the public disk if it exists.
+     */
+    private function deleteFile(?string $path): void
+    {
+        if ($path && Storage::disk('public')->exists($path)) {
+            Storage::disk('public')->delete($path);
+        }
     }
 }

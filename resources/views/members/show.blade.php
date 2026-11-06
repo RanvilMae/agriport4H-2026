@@ -1,38 +1,80 @@
 <x-app-layout>
-    <x-slot name="header">
-        <div class="flex items-center justify-between">
-            <h2 class="text-xl font-bold text-gray-800">Member Digital ID & Record</h2>
-            <a href="{{ route('members.index') }}" class="text-sm font-bold transition-colors text-emerald-600 hover:text-emerald-800 print:hidden">
-                &larr; Back to Directory
-            </a>
-        </div>
-    </x-slot>
-
-    <style>
-        @media print {
-            body { background: white; }
-            nav, .print\:hidden, .mt-8 { display: none !important; }
-            .max-w-7xl { margin: 0; padding: 0; max-width: 100%; }
-            .id-card { 
-                box-shadow: none !important; 
-                border: 1px solid #e2e8f0 !important;
-                margin: auto;
-            }
-            .member-details-card { display: none !important; }
-        }
-    </style>
-
     @php
+        // Shared by "My Profile" (member.profile.show) and the admin view of a member
+        $isSelf    = request()->routeIs('member.profile.*');
+        $editUrl   = $isSelf ? route('member.profile.edit') : route('members.edit', $member->id);
+
+        $photoUrl  = $member->photo_path ? asset('storage/' . $member->photo_path) : null;
+        $initials  = mb_strtoupper(mb_substr($member->first_name ?? '', 0, 1) . mb_substr($member->last_name ?? '', 0, 1));
+
+        $missing   = $member->missingIdFields();
+        $canPrint  = empty($missing);
+        $total     = count(\App\Models\Member::ID_REQUIRED_FIELDS);
+        $done      = $total - count($missing);
+        $percent   = $total ? (int) round($done / $total * 100) : 100;
+
         // Dynamic styling based on LSA Level
         $tier = $member->lsa_level ?? 'Standard';
         $gradient = match ($tier) {
             'Platinum' => 'from-slate-800 to-slate-950',
-            'Gold' => 'from-amber-400 to-amber-600',
-            default => 'from-emerald-500 to-emerald-700',
+            'Gold'     => 'from-amber-400 to-amber-600',
+            default    => 'from-emerald-500 to-emerald-700',
         };
     @endphp
 
+    <x-slot name="header">
+        <div class="flex items-center justify-between">
+            <h2 class="text-xl font-bold text-gray-800">{{ $isSelf ? 'My Digital ID & Record' : 'Member Digital ID & Record' }}</h2>
+            @unless($isSelf)
+                <a href="{{ route('members.index') }}" class="text-sm font-bold transition-colors text-emerald-600 hover:text-emerald-800">
+                    &larr; Back to Directory
+                </a>
+            @endunless
+        </div>
+    </x-slot>
+
+    {{-- Block browser printing (Ctrl + P): IDs must come from the official Print ID card --}}
+    <style>
+        .print-blocked { display: none; }
+        @media print {
+            body * { visibility: hidden !important; }
+            .print-blocked, .print-blocked * { visibility: visible !important; }
+            .print-blocked {
+                display: block !important;
+                position: fixed; inset: 0;
+                padding: 3rem; text-align: center;
+                font-family: sans-serif;
+            }
+        }
+    </style>
+    <div class="print-blocked">
+        <h1 style="font-size: 20px; font-weight: 800;">This page can't be printed.</h1>
+        <p style="margin-top: 8px; font-size: 13px;">
+            @if($canPrint)
+                Use the <strong>Print ID</strong> button on the page to print the official ID card.
+            @else
+                The ID card is available once the member profile is complete
+                ({{ count($missing) }} required {{ \Illuminate\Support\Str::plural('detail', count($missing)) }} missing).
+            @endif
+        </p>
+    </div>
+
     <div class="max-w-7xl px-4 py-8 mx-auto">
+
+        {{-- Flash Messages --}}
+        @if(session('success'))
+            <div class="flex items-center gap-3 p-4 mb-6 text-xs font-bold border rounded-2xl bg-emerald-50 border-emerald-100 text-emerald-700">
+                <i class="fas fa-circle-check text-emerald-600"></i>
+                <span>{{ session('success') }}</span>
+            </div>
+        @endif
+        @if(session('error'))
+            <div class="flex items-start gap-3 p-4 mb-6 text-xs font-bold border rounded-2xl bg-amber-50 border-amber-200 text-amber-800">
+                <i class="mt-0.5 fas fa-triangle-exclamation text-amber-600"></i>
+                <span>{{ session('error') }}</span>
+            </div>
+        @endif
+
         {{-- Two Column Grid: Left ID Card, Right Member Details --}}
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
 
@@ -44,7 +86,7 @@
                     {{-- Top Accent / Tier Color --}}
                     <div class="flex items-start justify-between h-32 p-6 bg-gradient-to-br {{ $gradient }}">
                         <span class="text-white/80 text-[10px] font-black uppercase tracking-[0.2em]">Official Member ID</span>
-                        
+
                         {{-- Tier Badge --}}
                         <div class="px-3 py-1 border rounded-full bg-white/20 backdrop-blur-md border-white/30">
                             <span class="text-white text-[10px] font-bold uppercase tracking-wider">
@@ -56,26 +98,41 @@
                     {{-- Profile Section --}}
                     <div class="px-8 -mt-12 text-center">
                         <div class="inline-block p-2 bg-white rounded-[2rem] shadow-lg">
-                            <div class="w-24 h-24 bg-gray-50 rounded-[1.5rem] flex items-center justify-center text-3xl font-black text-emerald-600 border-2 border-emerald-50">
-                                {{ substr($member->first_name, 0, 1) }}{{ substr($member->last_name, 0, 1) }}
-                            </div>
+                            @if($photoUrl)
+                                <img src="{{ $photoUrl }}" alt="{{ $member->first_name }}"
+                                     class="object-cover w-24 h-24 rounded-[1.5rem] border-2 border-emerald-50">
+                            @else
+                                <div class="w-24 h-24 bg-gray-50 rounded-[1.5rem] flex items-center justify-center text-3xl font-black text-emerald-600 border-2 border-emerald-50">
+                                    {{ $initials }}
+                                </div>
+                            @endif
                         </div>
 
                         <h1 class="mt-4 text-2xl font-black tracking-tight text-gray-800">
                             {{ $member->first_name }} {{ $member->middle_name ? $member->middle_name . ' ' : '' }}{{ $member->last_name }} {{ $member->suffix ?? '' }}
                         </h1>
                         <p class="text-xs font-bold tracking-widest uppercase text-emerald-600/70">{{ $member->specialization ?? 'Member' }}</p>
+
+                        @if($member->verified_at)
+                            <span class="inline-flex items-center gap-1.5 mt-3 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest bg-emerald-100 text-emerald-700 border border-emerald-200">
+                                <i class="fas fa-check-double text-[8px]"></i> Verified
+                            </span>
+                        @else
+                            <span class="inline-flex items-center gap-1.5 mt-3 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest bg-amber-100 text-amber-700 border border-amber-200">
+                                <i class="fas fa-clock text-[8px]"></i> Pending Verification
+                            </span>
+                        @endif
                     </div>
 
                     {{-- QR Code Section --}}
                     <div class="flex flex-col items-center p-8 mt-4 border-t border-b border-gray-50 bg-gray-50/30">
                         <div class="p-4 bg-white border border-gray-100 shadow-inner rounded-3xl">
-                            {!! QrCode::size(150)->margin(1)->color(31, 41, 55)->generate($member->member_id) !!}
+                            {!! QrCode::size(150)->margin(1)->color(31, 41, 55)->generate($member->member_id ?? 'UNASSIGNED') !!}
                         </div>
                         <div class="mt-4 text-center">
                             <span class="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1">Membership No.</span>
                             <code class="px-3 py-1 font-mono text-xs font-bold text-gray-600 rounded-full bg-gray-200/50">
-                                {{ $member->member_id }}
+                                {{ $member->member_id ?? 'Unassigned' }}
                             </code>
                         </div>
                     </div>
@@ -98,33 +155,90 @@
                     </div>
                 </div>
 
+                {{-- Profile Completion: shown until everything needed for the ID is filled in --}}
+                @unless($canPrint)
+                    <div class="p-6 bg-white border border-amber-200 shadow-sm rounded-3xl">
+                        <div class="flex items-start gap-3">
+                            <div class="flex items-center justify-center w-10 h-10 rounded-2xl bg-amber-100 text-amber-600 shrink-0">
+                                <i class="fas fa-id-card"></i>
+                            </div>
+                            <div>
+                                <h3 class="text-sm font-black text-gray-800">
+                                    {{ $isSelf ? 'Complete your profile to get your ID' : 'Profile incomplete — ID not yet printable' }}
+                                </h3>
+                                <p class="mt-0.5 text-xs text-gray-500">
+                                    {{ $done }} of {{ $total }} required details filled in
+                                </p>
+                            </div>
+                        </div>
+
+                        {{-- Progress --}}
+                        <div class="w-full h-2 mt-4 overflow-hidden rounded-full bg-gray-100">
+                            <div class="h-full rounded-full bg-gradient-to-r from-amber-400 to-emerald-500" style="width: {{ $percent }}%"></div>
+                        </div>
+
+                        {{-- Checklist --}}
+                        <ul class="mt-4 space-y-1.5">
+                            @foreach(\App\Models\Member::ID_REQUIRED_FIELDS as $field => $label)
+                                @php $filled = ! in_array($label, $missing, true); @endphp
+                                <li class="flex items-center gap-2 text-xs font-semibold {{ $filled ? 'text-gray-400' : 'text-gray-800' }}">
+                                    @if($filled)
+                                        <i class="w-4 text-center fas fa-circle-check text-emerald-500"></i>
+                                        <span class="line-through">{{ $label }}</span>
+                                    @else
+                                        <i class="w-4 text-center far fa-circle text-amber-500"></i>
+                                        <span>{{ $label }}</span>
+                                    @endif
+                                </li>
+                            @endforeach
+                        </ul>
+
+                        @can('update', $member)
+                            <a href="{{ $editUrl }}"
+                               class="flex items-center justify-center w-full gap-2 py-3 mt-5 text-xs font-black tracking-wider text-white uppercase transition-all bg-amber-500 rounded-2xl hover:bg-amber-600 active:scale-95">
+                                <i class="fas fa-pen"></i> {{ $isSelf ? 'Complete My Profile' : 'Complete Profile' }}
+                            </a>
+                        @endcan
+                    </div>
+                @endunless
+
                 {{-- Action Buttons --}}
-                <div class="flex flex-col gap-3 print:hidden">
+                <div class="flex flex-col gap-3">
                     @can('update', $member)
-                        <a href="{{ route('members.edit', $member->id) }}"
+                        <a href="{{ $editUrl }}"
                             class="w-full py-3.5 text-sm font-black text-center text-white transition-all shadow-md bg-emerald-600 rounded-2xl hover:bg-emerald-700 active:scale-95 flex items-center justify-center gap-2">
                             <i class="fas fa-edit"></i> Edit Member Details
                         </a>
                     @endcan
 
                     <div class="flex gap-3">
-                        <button onclick="window.print()"
-                            class="flex-1 py-3 text-sm font-black text-white transition-all shadow-md bg-slate-900 rounded-2xl hover:bg-black active:scale-95 flex items-center justify-center gap-2">
-                            <i class="fas fa-print"></i> Print ID
-                        </button>
+                        @if($canPrint)
+                            <a href="{{ route('members.download-id', $member) }}" target="_blank" rel="noopener"
+                                class="flex-1 py-3 text-sm font-black text-white transition-all shadow-md bg-slate-900 rounded-2xl hover:bg-black active:scale-95 flex items-center justify-center gap-2">
+                                <i class="fas fa-print"></i> Print ID
+                            </a>
+                        @else
+                            <button type="button" disabled
+                                title="Complete the profile to print the ID"
+                                class="flex-1 py-3 text-sm font-black text-gray-400 bg-gray-100 border border-gray-200 rounded-2xl cursor-not-allowed flex items-center justify-center gap-2">
+                                <i class="fas fa-lock"></i> Print ID
+                            </button>
+                        @endif
 
-                        <a href="mailto:{{ $member->email }}"
-                            class="flex-1 py-3 text-sm font-black text-center text-gray-700 transition-all bg-white border border-gray-200 shadow-sm rounded-2xl hover:bg-gray-50 active:scale-95 flex items-center justify-center gap-2">
-                            <i class="fas fa-envelope"></i> Contact
-                        </a>
+                        @unless($isSelf)
+                            <a href="mailto:{{ $member->email }}"
+                                class="flex-1 py-3 text-sm font-black text-center text-gray-700 transition-all bg-white border border-gray-200 shadow-sm rounded-2xl hover:bg-gray-50 active:scale-95 flex items-center justify-center gap-2">
+                                <i class="fas fa-envelope"></i> Contact
+                            </a>
+                        @endunless
                     </div>
                 </div>
             </div>
 
             {{-- RIGHT COLUMN: Full Member Details Card --}}
             <div class="lg:col-span-7 xl:col-span-8">
-                <div class="member-details-card bg-white border border-gray-100 rounded-3xl shadow-xl overflow-hidden print:hidden">
-                    
+                <div class="member-details-card bg-white border border-gray-100 rounded-3xl shadow-xl overflow-hidden">
+
                     {{-- Card Header --}}
                     <div class="flex items-center justify-between p-6 bg-gray-50/80 border-b border-gray-100">
                         <div>
@@ -132,7 +246,7 @@
                             <p class="text-xs text-gray-500">Comprehensive raw registration record</p>
                         </div>
                         @can('update', $member)
-                            <a href="{{ route('members.edit', $member->id) }}" class="text-xs font-bold text-emerald-600 hover:text-emerald-800 hover:underline flex items-center gap-1">
+                            <a href="{{ $editUrl }}" class="text-xs font-bold text-emerald-600 hover:text-emerald-800 hover:underline flex items-center gap-1">
                                 <i class="fas fa-pencil-alt text-[10px]"></i> Edit Profile
                             </a>
                         @endcan
@@ -204,12 +318,12 @@
                                 </div>
                                 <div>
                                     <span class="text-[11px] font-bold text-gray-400 uppercase block">City / Municipality</span>
-                                    <p class="text-sm font-bold text-gray-800">{{ $member->cityMunicipality->name ?? $member->city_municipality ?? 'N/A' }}</p>
+                                    <p class="text-sm font-bold text-gray-800">{{ $member->city_municipality ?? 'N/A' }}</p>
                                 </div>
                                 <div>
                                     <span class="text-[11px] font-bold text-gray-400 uppercase block">Barangay & Zip</span>
                                     <p class="text-sm font-bold text-gray-800">
-                                        {{ $member->barangayRelation->name ?? $member->barangay ?? 'N/A' }} {{ $member->zip_code ? "({$member->zip_code})" : '' }}
+                                        {{ $member->barangay ?? 'N/A' }} {{ $member->zip_code ? "({$member->zip_code})" : '' }}
                                     </p>
                                 </div>
                             </div>
@@ -300,12 +414,12 @@
                                 </div>
 
                                 {{-- Attachment Download --}}
-                                @if($member->member_file_path)
+                                @if($member->agri_resume_path)
                                     <div class="sm:col-span-2 pt-2">
-                                        <span class="text-[11px] font-bold text-gray-400 uppercase block mb-1">Attached Member File</span>
-                                        <a href="{{ route('members.download-file', $member->id) }}" 
+                                        <span class="text-[11px] font-bold text-gray-400 uppercase block mb-1">Attached Agri-Resume</span>
+                                        <a href="{{ route('members.download-file', $member->id) }}"
                                            class="inline-flex items-center gap-2 text-xs font-bold text-emerald-600 bg-emerald-50 px-3 py-2 rounded-xl border border-emerald-200 hover:bg-emerald-100 transition-colors">
-                                            <i class="fas fa-paperclip"></i> Download Member Attachment File
+                                            <i class="fas fa-paperclip"></i> Download Agri-Resume
                                         </a>
                                     </div>
                                 @endif

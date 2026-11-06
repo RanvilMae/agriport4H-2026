@@ -5,16 +5,42 @@
         </h2>
     </x-slot>
 
+    @php
+        // This view is shared by the admin edit page and the member's own profile edit page.
+        $isSelfEdit = request()->routeIs('member.profile.*');
+        $formAction = $isSelfEdit ? route('member.profile.update') : route('members.update', $member->id);
+        $backUrl    = $isSelfEdit ? route('member.profile.show') : route('members.index');
+        $photoUrl   = $member->photo_path ? asset('storage/' . $member->photo_path) : null;
+        $dobValue   = $member->dob ? \Illuminate\Support\Carbon::parse($member->dob)->format('Y-m-d') : '';
+        $missingId  = $member->missingIdFields();
+    @endphp
+
     <div class="py-6 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
         {{-- Navigation Header --}}
         <div class="flex items-center justify-between">
-            <a href="{{ route('members.index') }}" class="text-sm text-gray-500 hover:text-emerald-600 font-bold flex items-center transition-colors">
-                <i class="fas fa-arrow-left mr-2"></i> Back to Directory
+            <a href="{{ $backUrl }}" class="text-sm text-gray-500 hover:text-emerald-600 font-bold flex items-center transition-colors">
+                <i class="fas fa-arrow-left mr-2"></i> {{ $isSelfEdit ? 'Back to My Profile' : 'Back to Directory' }}
             </a>
             <span class="text-xs font-semibold px-3 py-1 bg-emerald-100 text-emerald-800 rounded-full">
                 UID: {{ $member->member_id ?? 'Unassigned' }}
             </span>
         </div>
+
+        {{-- What is still needed before the ID can be printed --}}
+        @if(! empty($missingId))
+            <div class="flex items-start gap-3 p-4 border rounded-2xl bg-amber-50 border-amber-200">
+                <i class="mt-0.5 fas fa-id-card text-amber-600"></i>
+                <div class="text-xs">
+                    <p class="font-black text-amber-800">Fill these in so the ID card can be printed:</p>
+                    <p class="mt-1 font-semibold text-amber-700">{{ implode(' · ', $missingId) }}</p>
+                </div>
+            </div>
+        @else
+            <div class="flex items-center gap-3 p-4 text-xs font-bold border rounded-2xl bg-emerald-50 border-emerald-100 text-emerald-700">
+                <i class="fas fa-circle-check text-emerald-600"></i>
+                All required details are complete. The ID card can be printed.
+            </div>
+        @endif
 
         {{-- Validation Errors --}}
         @if ($errors->any())
@@ -32,9 +58,60 @@
         @endif
 
         {{-- Main Form Container --}}
-        <form action="{{ route('members.update', $member->id) }}" method="POST" enctype="multipart/form-data" class="space-y-6">
+        <form action="{{ $formAction }}" method="POST" enctype="multipart/form-data" class="space-y-6">
             @csrf
             @method('PUT')
+
+            {{-- Profile Photo --}}
+            <div x-data="{ preview: @js($photoUrl), fileName: '' }"
+                 class="bg-white rounded-[2rem] shadow-sm border border-gray-100 overflow-hidden">
+                <div class="flex items-center justify-between px-8 py-4 border-b border-gray-100 bg-gray-50/50">
+                    <h3 class="text-xs font-black text-emerald-600 uppercase tracking-[0.2em] flex items-center gap-2">
+                        <i class="fas fa-camera"></i> Profile Photo
+                    </h3>
+                    <span class="text-[10px] text-gray-400 font-medium">Used on the Digital ID and Member Registry</span>
+                </div>
+
+                <div class="p-8 flex flex-col sm:flex-row sm:items-center gap-6">
+                    {{-- Preview --}}
+                    <div class="w-32 h-32 rounded-[1.75rem] overflow-hidden bg-emerald-50 border-2 border-dashed border-emerald-200 flex items-center justify-center shrink-0">
+                        <template x-if="preview">
+                            <img :src="preview" class="object-cover w-full h-full" alt="Profile photo preview">
+                        </template>
+                        <template x-if="!preview">
+                            <div class="flex flex-col items-center text-emerald-300">
+                                <i class="text-4xl fas fa-user"></i>
+                                <span class="mt-1 text-[9px] font-black uppercase tracking-widest">No Photo</span>
+                            </div>
+                        </template>
+                    </div>
+
+                    {{-- Picker --}}
+                    <div class="space-y-3">
+                        <div>
+                            <p class="text-sm font-bold text-gray-800">Upload a clear, front-facing photo</p>
+                            <p class="text-xs text-gray-500">JPG, PNG or WEBP · max 2 MB · a square photo looks best</p>
+                        </div>
+
+                        <label for="photo"
+                               class="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-black tracking-wider text-white uppercase transition bg-emerald-600 cursor-pointer rounded-2xl hover:bg-emerald-700 shadow-lg shadow-emerald-600/20">
+                            <i class="fas fa-upload"></i>
+                            <span x-text="preview ? 'Change Photo' : 'Choose Photo'"></span>
+                        </label>
+                        <input id="photo" type="file" name="photo" accept="image/jpeg,image/png,image/webp" class="sr-only"
+                               @change="const f = $event.target.files[0]; if (f) { preview = URL.createObjectURL(f); fileName = f.name; }">
+
+                        <p x-show="fileName" x-cloak class="text-[11px] font-bold text-emerald-700">
+                            <i class="mr-1 fas fa-check-circle"></i>
+                            <span x-text="fileName"></span> — will be saved when you click "Save Member Details"
+                        </p>
+
+                        @error('photo')
+                            <p class="text-xs font-bold text-red-500">{{ $message }}</p>
+                        @enderror
+                    </div>
+                </div>
+            </div>
 
             {{-- 1. Identity & Demographics Section --}}
             <div class="bg-white rounded-[2rem] shadow-sm border border-gray-100 overflow-hidden">
@@ -42,7 +119,7 @@
                     <h3 class="text-xs font-black text-emerald-600 uppercase tracking-[0.2em] flex items-center gap-2">
                         <i class="fas fa-user"></i> I. Identity & Demographics
                     </h3>
-                    <span class="text-[10px] text-gray-400 font-medium">Step 1 of 4</span>
+                    <span class="text-[10px] text-gray-400 font-medium">Step 1 of 3</span>
                 </div>
 
                 <div class="p-8">
@@ -100,35 +177,41 @@
                         {{-- Date of Birth --}}
                         <div>
                             <label for="dob" class="text-[11px] font-bold text-gray-500 uppercase block mb-1">Date of Birth</label>
-                            <input type="date" name="dob" id="dob" value="{{ old('dob', $member->dob) }}"
+                            <input type="date" name="dob" id="dob" value="{{ old('dob', $dobValue) }}"
+                                min="{{ now()->year - \App\Http\Controllers\MemberController::MAX_AGE }}-01-01"
+                                max="{{ now()->subDay()->format('Y-m-d') }}"
                                 class="w-full text-sm font-semibold text-gray-800 bg-gray-50 border border-gray-200 rounded-2xl px-3 py-2 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all outline-none">
+                            <p class="mt-1 text-[10px] font-semibold text-gray-400">Members must be {{ \App\Http\Controllers\MemberController::MAX_AGE }} or younger (born {{ now()->year - \App\Http\Controllers\MemberController::MAX_AGE }} or later).</p>
+                            @error('dob')
+                                <p class="mt-1 text-xs text-red-500">{{ $message }}</p>
+                            @enderror
                         </div>
 
                         {{-- Contact Number --}}
                         <div>
                             <label for="contact_no" class="text-[11px] font-bold text-gray-500 uppercase block mb-1">Contact Number</label>
-                            <input type="text" name="contact_no" id="contact_no" value="{{ old('contact_no', $member->contact_no) }}"
+                            <input type="text" name="contact_no" id="contact_no" required value="{{ old('contact_no', $member->contact_no) }}"
                                 class="w-full text-sm font-semibold text-gray-800 bg-gray-50 border border-gray-200 rounded-2xl px-3 py-2 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all outline-none">
                         </div>
 
                         {{-- Email Address --}}
                         <div>
                             <label for="email" class="text-[11px] font-bold text-gray-500 uppercase block mb-1">Email Address</label>
-                            <input type="email" name="email" id="email" value="{{ old('email', $member->email) }}"
-                                class="w-full text-sm font-semibold text-gray-800 bg-gray-50 border border-gray-200 rounded-2xl px-3 py-2 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all outline-none">
+                            @if($isSelfEdit)
+                                {{-- Tied to the login account, so it can't be changed here --}}
+                                <input type="email" id="email" value="{{ $member->email }}" readonly
+                                    title="Your email is linked to your login and can't be changed here"
+                                    class="w-full text-sm font-semibold text-gray-500 bg-gray-100 border border-gray-200 rounded-2xl px-3 py-2 cursor-not-allowed outline-none">
+                            @else
+                                <input type="email" name="email" id="email" value="{{ old('email', $member->email) }}"
+                                    class="w-full text-sm font-semibold text-gray-800 bg-gray-50 border border-gray-200 rounded-2xl px-3 py-2 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all outline-none">
+                            @endif
                         </div>
 
                         {{-- Occupation --}}
                         <div>
                             <label for="occupation" class="text-[11px] font-bold text-gray-500 uppercase block mb-1">Occupation</label>
                             <input type="text" name="occupation" id="occupation" value="{{ old('occupation', $member->occupation) }}"
-                                class="w-full text-sm font-semibold text-gray-800 bg-gray-50 border border-gray-200 rounded-2xl px-3 py-2 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all outline-none">
-                        </div>
-
-                        {{-- Specialization --}}
-                        <div>
-                            <label for="specialization" class="text-[11px] font-bold text-gray-500 uppercase block mb-1">Specialization</label>
-                            <input type="text" name="specialization" id="specialization" value="{{ old('specialization', $member->specialization) }}"
                                 class="w-full text-sm font-semibold text-gray-800 bg-gray-50 border border-gray-200 rounded-2xl px-3 py-2 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all outline-none">
                         </div>
 
@@ -156,7 +239,7 @@
                     <h3 class="text-xs font-black text-emerald-600 uppercase tracking-[0.2em] flex items-center gap-2">
                         <i class="fas fa-map-marker-alt"></i> II. Location & Jurisdiction
                     </h3>
-                    <span class="text-[10px] text-gray-400 font-medium">Step 2 of 4</span>
+                    <span class="text-[10px] text-gray-400 font-medium">Step 2 of 3</span>
                 </div>
 
                 <div class="p-8">
@@ -164,7 +247,7 @@
                         {{-- Region --}}
                         <div>
                             <label for="region_id" class="text-[11px] font-bold text-gray-500 uppercase block mb-1">Region</label>
-                            <select name="region_id" id="region_id" class="w-full text-sm font-semibold text-gray-800 bg-gray-50 border border-gray-200 rounded-2xl px-3 py-2 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all outline-none">
+                            <select name="region_id" id="region_id" required class="w-full text-sm font-semibold text-gray-800 bg-gray-50 border border-gray-200 rounded-2xl px-3 py-2 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all outline-none">
                                 <option value="">Select Region</option>
                                 @foreach($regions ?? [] as $region)
                                     <option value="{{ $region->id }}" {{ old('region_id', $member->region_id) == $region->id ? 'selected' : '' }}>
@@ -180,7 +263,9 @@
                             <select name="province_id" id="province_id" class="w-full text-sm font-semibold text-gray-800 bg-gray-50 border border-gray-200 rounded-2xl px-3 py-2 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all outline-none">
                                 <option value="">Select Province</option>
                                 @foreach($provinces ?? [] as $province)
-                                    <option value="{{ $province->id }}" {{ old('province_id', $member->province_id) == $province->id ? 'selected' : '' }}>
+                                    <option value="{{ $province->id }}"
+                                            data-region-id="{{ $province->region_id }}"
+                                            {{ old('province_id', $member->province_id) == $province->id ? 'selected' : '' }}>
                                         {{ $province->name }}
                                     </option>
                                 @endforeach
@@ -190,7 +275,7 @@
                         {{-- City / Municipality --}}
                         <div>
                             <label for="city_municipality" class="text-[11px] font-bold text-gray-500 uppercase block mb-1">City / Municipality</label>
-                            <input type="text" name="city_municipality" id="city_municipality" 
+                            <input type="text" name="city_municipality" id="city_municipality" required 
                                 value="{{ old('city_municipality', $member->city_municipality ?? ($member->city_municipality_id ?? '')) }}" 
                                 placeholder="Enter City / Municipality"
                                 class="w-full text-sm font-semibold text-gray-800 bg-gray-50 border border-gray-200 rounded-2xl px-3 py-2 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all outline-none">
@@ -201,7 +286,7 @@
                             <div class="grid grid-cols-3 gap-2">
                                 <div class="col-span-2">
                                     <label for="barangay" class="text-[11px] font-bold text-gray-500 uppercase block mb-1">Barangay</label>
-                                    <input type="text" name="barangay" id="barangay" 
+                                    <input type="text" name="barangay" id="barangay" required 
                                         value="{{ old('barangay', $member->barangay ?? ($member->barangay_id ?? '')) }}" 
                                         placeholder="Enter Barangay"
                                         class="w-full text-sm font-semibold text-gray-800 bg-gray-50 border border-gray-200 rounded-2xl px-3 py-2 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all outline-none">
@@ -221,8 +306,8 @@
            <div class="bg-white rounded-[2rem] shadow-sm border border-gray-100 overflow-hidden print:hidden">
                 <!-- Card Header -->
                 <div class="flex items-center justify-between px-8 py-4 border-b border-gray-100 bg-gray-50/50">
-                    <h3 class="text-xs font-black text-emerald-600 uppercase tracking-[0.2em]">IV. Agri-Resume & Field Experience Details</h3>
-                    <span class="text-[10px] text-gray-400 font-medium" aria-label="Step 4 of 4">Step 4 of 4</span>
+                    <h3 class="text-xs font-black text-emerald-600 uppercase tracking-[0.2em]">III. Agri-Resume & Field Experience Details</h3>
+                    <span class="text-[10px] text-gray-400 font-medium" aria-label="Step 3 of 3">Step 3 of 3</span>
                 </div>
 
                 <div class="p-8 space-y-8">
@@ -530,9 +615,15 @@
                             </div>
 
                             <div>
-                                <label for="agri_resume_file" class="block text-[10px] font-bold text-gray-400 uppercase mb-2 ml-1">Upload Agri-Resume / Curriculum Vitae (PDF/Docx)</label>
-                                <input type="file" id="agri_resume_file" name="agri_resume_file" accept=".pdf,.doc,.docx" class="w-full text-xs text-gray-500 border border-gray-200 rounded-2xl file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer">
-                                @error('agri_resume_file')
+                                <label for="member_file" class="block text-[10px] font-bold text-gray-400 uppercase mb-2 ml-1">Upload Agri-Resume / Curriculum Vitae (PDF/Docx)</label>
+                                <input type="file" id="member_file" name="member_file" accept=".pdf,.doc,.docx" class="w-full text-xs text-gray-500 border border-gray-200 rounded-2xl file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer">
+                                @if($member->agri_resume_path)
+                                    <p class="mt-1.5 text-[11px] font-semibold text-emerald-700">
+                                        <i class="mr-1 fas fa-paperclip"></i>
+                                        A resume is already on file. Uploading a new one replaces it.
+                                    </p>
+                                @endif
+                                @error('member_file')
                                     <p class="mt-1 text-xs text-red-500">{{ $message }}</p>
                                 @enderror
                             </div>
@@ -550,36 +641,35 @@
         </form>
     </div>
 
-    {{-- Dynamic Region-to-Organization Filter Script --}}
+    {{-- Show only the provinces and organizations of the chosen region --}}
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
+        document.addEventListener('DOMContentLoaded', function () {
             const regionSelect = document.getElementById('region_id');
-            const orgSelect = document.getElementById('organization_id');
+            if (!regionSelect) return;
 
-            function filterOrganizations() {
-                const selectedRegion = regionSelect.value;
-                const options = orgSelect.querySelectorAll('option');
+            function filterByRegion(select) {
+                if (!select) return;
+                const region = regionSelect.value;
 
-                options.forEach(option => {
-                    if (!option.value) return; // Keep "Select Organization"
-                    
-                    const orgRegion = option.getAttribute('data-region-id');
-                    if (!selectedRegion || orgRegion === selectedRegion) {
-                        option.style.display = '';
-                    } else {
-                        option.style.display = 'none';
-                        if (option.selected) {
-                            orgSelect.value = '';
-                        }
-                    }
+                select.querySelectorAll('option').forEach(option => {
+                    if (!option.value) return; // keep the "Select ..." placeholder
+
+                    const optionRegion = option.getAttribute('data-region-id');
+                    const show = !region || !optionRegion || optionRegion === region;
+
+                    option.hidden = !show;
+                    option.disabled = !show;
+                    if (!show && option.selected) select.value = '';
                 });
             }
 
-            if (regionSelect && orgSelect) {
-                regionSelect.addEventListener('change', filterOrganizations);
-                // Initial run on page load
-                filterOrganizations();
+            function filterAll() {
+                filterByRegion(document.getElementById('province_id'));
+                filterByRegion(document.getElementById('organization_id'));
             }
+
+            regionSelect.addEventListener('change', filterAll);
+            filterAll(); // initial run on page load
         });
     </script>
 </x-app-layout>

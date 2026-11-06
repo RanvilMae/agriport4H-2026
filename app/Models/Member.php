@@ -14,11 +14,32 @@ class Member extends Model
     use HasFactory;
 
     /**
+     * Fields that must be filled in before the member's ID card can be printed.
+     * Edit this list to change what counts as a "complete" profile.
+     *
+     * @var array<string, string>  column => label shown to users
+     */
+    public const ID_REQUIRED_FIELDS = [
+        'photo_path'        => 'Profile photo',
+        'sex'               => 'Sex',
+        'dob'               => 'Date of birth',
+        'contact_no'        => 'Contact number',
+        'region_id'         => 'Region',
+        'province_id'       => 'Province',
+        'city_municipality' => 'City / Municipality',
+        'barangay'          => 'Barangay',
+        'specialization'    => 'Specialization',
+    ];
+
+    /**
      * The attributes that are mass assignable.
      *
      * @var array<int, string>
      */
     protected $fillable = [
+        // Account link
+        'user_id',
+
         // Section I: Identity & Demographics
         'last_name',
         'first_name',
@@ -31,6 +52,7 @@ class Member extends Model
         'email',
         'member_id',
         'uid',
+        'photo_path',
         'verified_at', // Added to allow fillable timestamp verification
 
         // Section II: Address & Location Details
@@ -118,6 +140,15 @@ class Member extends Model
         );
     }
 
+    /**
+     * Public URL of the profile photo, or null if none.
+     * Usage: $member->photo_url
+     */
+    public function getPhotoUrlAttribute(): ?string
+    {
+        return $this->photo_path ? asset('storage/' . $this->photo_path) : null;
+    }
+
     /* =========================================================================
      | Query Scopes
      | ========================================================================= */
@@ -135,6 +166,7 @@ class Member extends Model
             $sub->where('first_name', 'like', "%{$term}%")
                 ->orWhere('last_name', 'like', "%{$term}%")
                 ->orWhere('email', 'like', "%{$term}%")
+                ->orWhere('member_id', 'like', "%{$term}%")
                 ->orWhere('uid', 'like', "%{$term}%");
         });
     }
@@ -154,6 +186,11 @@ class Member extends Model
     /* =========================================================================
      | Relationships
      | ========================================================================= */
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'user_id');
+    }
 
     public function region(): BelongsTo
     {
@@ -176,6 +213,30 @@ class Member extends Model
     }
 
     /* =========================================================================
+     | ID Card Readiness
+     | ========================================================================= */
+
+    /**
+     * Labels of the required fields that are still empty.
+     * Usage: $member->missingIdFields()  // ['Profile photo', 'Sex']
+     */
+    public function missingIdFields(): array
+    {
+        return collect(self::ID_REQUIRED_FIELDS)
+            ->filter(fn ($label, $field) => blank($this->{$field}))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * True when every required field is filled in.
+     */
+    public function canPrintId(): bool
+    {
+        return empty($this->missingIdFields());
+    }
+
+    /* =========================================================================
      | Helper Methods & Utilities
      | ========================================================================= */
 
@@ -185,19 +246,16 @@ class Member extends Model
     }
 
     /**
-     * Generate unique identification string for the regional registry.
+     * Generate the next Member ID for a region.
+     *
+     * Kept for older code that calls Member::generateUid(); it now uses the
+     * same generator as registration so every ID follows one format:
+     * 4H-{RegionCode}-{Year}-000-000 (e.g. 4H-I-2026-000-001).
      */
     public static function generateUid(string $regionCode): string
     {
-        $year  = date('Y');
-        $count = static::whereYear('created_at', $year)->count() + 1;
+        $regionId = Region::where('region_code', $regionCode)->value('id');
 
-        // Format: 4H - REGION - YEAR - 000 - 00001
-        return sprintf(
-            "4H-%s-%s-000-%05d",
-            strtoupper($regionCode),
-            $year,
-            $count
-        );
+        return User::generateMemberId($regionId);
     }
 }

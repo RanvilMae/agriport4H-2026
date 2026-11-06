@@ -129,23 +129,14 @@
                 <form method="POST" action="{{ route('register') }}" class="space-y-3.5">
                     @csrf
 
-                    {{-- Member ID --}}
+                    {{-- Member ID (system-generated, not editable) --}}
                     <div class="space-y-1">
                         <label class="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Member ID</label>
-                        <div class="relative group">
-                            <span class="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none text-slate-400 group-focus-within:text-emerald-700 transition-colors">
-                                <i class="fa-solid fa-id-card"></i>
-                            </span>
-                            <input 
-                                type="text" 
-                                name="member_id" 
-                                value="{{ old('member_id') }}" 
-                                required 
-                                placeholder="e.g. 4H-2024-001"
-                                class="w-full pl-11 pr-4 py-2.5 bg-slate-50 border @error('member_id') border-red-400 focus:ring-red-500/10 @else border-slate-200 focus:ring-emerald-600/10 focus:border-emerald-600 @enderror rounded-2xl focus:bg-white focus:ring-4 transition-all outline-none font-bold text-xs text-slate-800"
-                            >
+                        <div class="flex items-center gap-3 pl-4 pr-4 py-2.5 bg-emerald-50/60 border border-dashed border-emerald-200 rounded-2xl">
+                            <i class="fa-solid fa-id-card text-emerald-600"></i>
+                            <span class="font-bold text-xs text-emerald-800">Auto-assigned after registration</span>
+                            <span class="ml-auto text-[10px] font-black text-emerald-600/70 uppercase tracking-wider">4H-<span id="member-id-region">NAT</span>-{{ date('Y') }}-000-###</span>
                         </div>
-                        <x-input-error :messages="$errors->get('member_id')" class="mt-1" />
                     </div>
 
                     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -217,10 +208,10 @@
                                 <span class="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none text-slate-400 group-focus-within:text-emerald-700 transition-colors">
                                     <i class="fa-solid fa-map-location-dot"></i>
                                 </span>
-                                <select name="region_id" class="w-full pl-11 pr-8 py-2.5 bg-slate-50 border @error('region_id') border-red-400 focus:ring-red-500/10 @else border-slate-200 focus:ring-emerald-600/10 focus:border-emerald-600 @enderror rounded-2xl focus:bg-white focus:ring-4 transition-all outline-none font-bold text-xs text-slate-800 appearance-none">
+                                <select name="region_id" id="region_id" onchange="updateMemberIdPreview()" class="w-full pl-11 pr-8 py-2.5 bg-slate-50 border @error('region_id') border-red-400 focus:ring-red-500/10 @else border-slate-200 focus:ring-emerald-600/10 focus:border-emerald-600 @enderror rounded-2xl focus:bg-white focus:ring-4 transition-all outline-none font-bold text-xs text-slate-800 appearance-none">
                                     <option value="">Select Region</option>
                                     @foreach($regions as $region)
-                                        <option value="{{ $region->id }}" {{ old('region_id') == $region->id ? 'selected' : '' }}>{{ $region->name }}</option>
+                                        <option value="{{ $region->id }}" data-code="{{ $region->region_code }}" {{ old('region_id') == $region->id ? 'selected' : '' }}>{{ $region->name }}</option>
                                     @endforeach
                                 </select>
                                 <span class="absolute inset-y-0 right-0 flex items-center pr-4 pointer-events-none text-slate-400">
@@ -274,7 +265,7 @@
                             <label class="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-1">Confirm</label>
                             <div class="relative group">
                                 <span class="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none text-slate-400 group-focus-within:text-emerald-700 transition-colors">
-                                    <i class="fa-solid fa-lock-check"></i>
+                                    <i class="fa-solid fa-lock"></i>
                                 </span>
                                 <input 
                                     id="password_confirmation" 
@@ -334,6 +325,19 @@
             if (pwd) pwd.type = type;
             if (pwdConfirm) pwdConfirm.type = type;
         }
+
+        // Show the selected region's code in the Member ID preview
+        function updateMemberIdPreview() {
+            const select = document.getElementById('region_id');
+            const target = document.getElementById('member-id-region');
+            if (!select || !target) return;
+
+            const code = select.options[select.selectedIndex]?.dataset.code;
+            target.textContent = (code || 'NAT').replace(/\s+/g, '').toUpperCase();
+        }
+
+        // Keep the preview correct when the form reloads with old() values
+        document.addEventListener('DOMContentLoaded', updateMemberIdPreview);
     </script>
 </body>
 </html>
