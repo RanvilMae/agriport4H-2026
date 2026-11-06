@@ -1,59 +1,116 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# AgriPort 4H System
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+**AgriPort 4H** is a specialized web platform designed for managing 4-H Club membership records, agricultural resumes, organizational certifications, regional announcements, and system audit logs.
 
-## About Laravel
+---
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+## 🛠 System Requirements
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+Ensure your server or local environment meets the following specifications:
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+* **PHP Version:** `^8.4.23`
+* **Composer:** `^2.9.4`
+* **Database:** MySQL / MariaDB
+* **Node.js & NPM:** Latest LTS (for asset compilation via Vite)
+* **Required PHP Extensions:**
+  `bcmath`, `ctype`, `curl`, `dom`, `fileinfo`, `filter`, `gd`, `iconv`, `intl`, `json`, `libxml`, `mbstring`, `openssl`, `pdo_mysql`, `session`, `simplexml`, `tokenizer`, `xml`, `zip`
 
-## Learning Laravel
+---
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+## 🚀 Quick Setup Guide
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+Follow these steps to set up the project locally on Laragon, XAMPP, or a server:
 
-## Laravel Sponsors
+### 1. Clone the Repository
+```bash
+git clone <your-repository-url> agriport4h
+cd agriport4h
+```
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+### 2. Install Dependencies
+```bash
+composer install
+npm install
+```
 
-### Premium Partners
+### 3. Configure Environment Variables
+Copy the `.env.example` file to create your `.env` configuration file:
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+```bash
+cp .env.example .env
+```
 
-## Contributing
+Configure your local database credentials inside `.env`:
+```ini
+APP_NAME="AgriPort 4H"
+APP_ENV=local
+APP_KEY=
+APP_DEBUG=true
+APP_URL=http://localhost
+APP_TIMEZONE="Asia/Manila"
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=4h_hub
+DB_USERNAME=root
+DB_PASSWORD=
+```
 
-## Code of Conduct
+### 4. Generate Application Key
+```bash
+php artisan key:generate
+```
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+### 5. Run Database Migrations
+Run the database migrations to build the initial schema:
 
-## Security Vulnerabilities
+```bash
+php artisan migrate
+```
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+### 6. Create Symbolic Storage Link
+Generate the storage symlink to enable media uploads and public downloads:
 
-## License
+```bash
+php artisan storage:link
+```
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+---
+
+## 💻 Development Workflow
+
+To compile assets and serve the application locally:
+
+```bash
+# Compile and hot-reload frontend assets
+npm run dev
+
+# Start local server (optional if using Laragon virtual host)
+php artisan serve
+```
+
+---
+
+## 🗄️ Migration History
+
+The repository includes the following core migrations:
+
+1. **System & Framework Base:** `cache`, `jobs`, `lsa_levels`, `suffixes`
+2. **Database Setup:** `initial_database_setup`
+3. **Core Features:**
+   - `create_announcements_table` & `add_media_to_announcements_table`
+   - `create_audit_logs_table`
+   - `add_acceptance_fields_to_users_table`
+   - `add_member_id_to_members_table` & `add_verification_to_members_table`
+   - `add_region_id_to_announcements_table`
+   - `add_certification_path_to_organizations_table`
+   - `add_agri_resume_fields_to_members_table`
+   - `add_uid_to_members_table`
+   - `add_member_id_to_users_table`
+
+---
+
+## 🛡️ License & Maintenance
+
+This project is maintained for the **4-H Club / AgriPort Platform**. Ensure that sensitive configuration parameters in `.env` are never committed to version control.
