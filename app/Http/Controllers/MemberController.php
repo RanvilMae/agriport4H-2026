@@ -11,6 +11,7 @@ use App\Models\Province;
 use App\Models\Region;
 use App\Models\Suffix;
 use App\Models\User;
+use App\Support\MemberForm;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -116,9 +117,12 @@ class MemberController extends Controller
     {
         $this->authorize('create', Member::class);
 
+        $form = MemberForm::get();
+
         $request->validate(
-            ['photo' => self::PHOTO_RULES, 'dob' => $this->dobRules()],
-            $this->dobMessages()
+            array_merge(['photo' => self::PHOTO_RULES, 'dob' => $this->dobRules()], $form->rules()),
+            $this->dobMessages(),
+            $form->attributes()
         );
 
         $validated = $request->validated();
@@ -136,9 +140,15 @@ class MemberController extends Controller
         }
 
         // Same Member ID format as self-registration: 4H-{RegionCode}-{Year}-000-000
+        // New members are always registered as Single
+        $validated['civil_status'] = 'Single';
+
         $validated['member_id'] = User::generateMemberId($validated['region_id'] ?? null);
 
-        Member::create($validated);
+        $member = Member::create($validated);
+
+        // Answers to the Admin's custom questions
+        $form->saveAnswers($member, $request->input('custom', []));
 
         return redirect()->route('members.index')
             ->with('success', "Member registered successfully! ID: {$validated['member_id']}");
@@ -189,16 +199,25 @@ class MemberController extends Controller
     {
         Gate::authorize('update', $member);
 
+        $form = MemberForm::get();
+
         $request->validate(
-            ['photo' => self::PHOTO_RULES, 'dob' => $this->dobRules()],
-            $this->dobMessages()
+            array_merge(['photo' => self::PHOTO_RULES, 'dob' => $this->dobRules()], $form->rules()),
+            $this->dobMessages(),
+            $form->attributes()
         );
 
         $validated = $request->validated();
 
+        // Unticked checkboxes aren't sent, so clear lists explicitly,
+        // but only for lists the form actually showed (so hidden ones keep their data)
         $validated['crops'] = $request->input('crops', []);
-        $validated['services'] = $request->input('services', []);
-        $validated['farm_equipment'] = $request->input('farm_equipment', []);
+        if ($request->has('services')) {
+            $validated['services'] = $request->input('services', []);
+        }
+        if ($form->fieldVisible('farm_equipment')) {
+            $validated['farm_equipment'] = $request->input('farm_equipment', []);
+        }
 
         if ($request->hasFile('member_file')) {
             $this->deleteFile($member->agri_resume_path);
@@ -211,6 +230,8 @@ class MemberController extends Controller
         }
 
         $member->update($validated);
+
+        $form->saveAnswers($member, $request->input('custom', []));
 
         return redirect()->route('members.index')
             ->with('success', 'Member record updated successfully!');
@@ -265,9 +286,13 @@ class MemberController extends Controller
             $qr = 'data:image/svg+xml;base64,' . base64_encode($svg);
         }
 
-        $pdf = Pdf::loadView('members.pdf-id', compact('member', 'photo', 'logo', 'qr'))
-            // CR80 / ATM card size: 85.6 x 54 mm (242.65 x 153.07 pt), front + back
-            ->setPaper([0, 0, 242.65, 153.07], 'portrait')
+        // Default: A4 sheet with front + back at exact card size (for regular printers).
+        // ?format=card gives two card-size pages instead (for PVC / ID card printers).
+        $sheet = request('format') !== 'card';
+
+        $pdf = Pdf::loadView('members.pdf-id', compact('member', 'photo', 'logo', 'qr', 'sheet'))
+            // A4 portrait, or CR80 card size: 85.6 x 54 mm (242.65 x 153.07 pt)
+            ->setPaper($sheet ? 'a4' : [0, 0, 242.65, 153.07], 'portrait')
             ->setOptions([
                 'isHtml5ParserEnabled' => true,
                 'isRemoteEnabled'      => false,
@@ -433,17 +458,23 @@ class MemberController extends Controller
             'certifications'       => 'nullable|string|max:255',
             'member_file'          => 'nullable|file|mimes:pdf,doc,docx|max:5120',
             'photo'                => self::PHOTO_RULES,
-        ], $this->dobMessages());
+            ...MemberForm::get()->rules(),
+        ], $this->dobMessages(), MemberForm::get()->attributes());
 
-        // Uploaded files are handled separately; they are not table columns
-        unset($validated['member_file'], $validated['photo']);
+        $form = MemberForm::get();
 
-        // Unticked checkboxes aren't sent, so clear lists explicitly
+        // Uploaded files and custom answers are saved separately; they are not table columns
+        unset($validated['member_file'], $validated['photo'], $validated['custom']);
+
+        // Unticked checkboxes aren't sent, so clear lists explicitly,
+        // but only for lists the form actually showed (so hidden ones keep their data)
         $validated['crops'] = $request->input('crops', []);
-        $validated['farm_equipment'] = $request->input('farm_equipment', []);
+        if ($form->fieldVisible('farm_equipment')) {
+            $validated['farm_equipment'] = $request->input('farm_equipment', []);
+        }
 
-        // RSBSA number only applies when registered
-        if (! $request->boolean('is_rsbsa_registered')) {
+        // RSBSA number only applies when registered (and only if the question was shown)
+        if ($form->fieldVisible('is_rsbsa_registered') && ! $request->boolean('is_rsbsa_registered')) {
             $validated['rsbsa_no'] = null;
         }
 
@@ -458,6 +489,8 @@ class MemberController extends Controller
         }
 
         $member->update($validated);
+
+        $form->saveAnswers($member, $request->input('custom', []));
 
         return redirect()->route('member.profile.show')
             ->with('success', 'Your member details have been updated successfully.');

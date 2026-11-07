@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Member extends Model
 {
@@ -29,6 +30,7 @@ class Member extends Model
         'city_municipality' => 'City / Municipality',
         'barangay'          => 'Barangay',
         'specialization'    => 'Specialization',
+        'organization_id'   => 'Organization / Club',
     ];
 
     /**
@@ -210,6 +212,14 @@ class Member extends Model
     public function lsaLevel(): BelongsTo
     {
         return $this->belongsTo(LsaLevel::class, 'lsa_level', 'name');
+    }
+
+    /**
+     * Answers to the custom questions added in the Member Form Builder.
+     */
+    public function fieldValues(): HasMany
+    {
+        return $this->hasMany(MemberFieldValue::class);
     }
 
     /* =========================================================================

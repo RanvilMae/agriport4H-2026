@@ -139,18 +139,24 @@
                     </div>
                     <div>
                         <label class="block text-[10px] font-bold text-gray-400 uppercase mb-2 ml-1">Civil Status</label>
-                        <select name="civil_status" class="w-full border-gray-200 rounded-2xl focus:ring-green-500">
-                            <option value="Single">Single</option>
-                        </select>
+                        {{-- New members are always registered as Single --}}
+                        <input type="hidden" name="civil_status" value="Single">
+                        <div class="flex items-center justify-between w-full px-3 py-2 text-sm font-semibold text-gray-500 bg-gray-100 border border-gray-200 rounded-2xl cursor-not-allowed"
+                             title="New members are registered as Single">
+                            <span>Single</span>
+                            <i class="text-xs fas fa-lock text-gray-400"></i>
+                        </div>
                     </div>
                     @php
-                        $maxDate = date('Y-m-d', strtotime('-10 years'));
-                        $minDate = date('Y-m-d', strtotime('-80 years'));
+                        // Members must be 30 or younger, counted by birth year
+                        $maxDate = now()->subDay()->format('Y-m-d');
+                        $minDate = (now()->year - \App\Http\Controllers\MemberController::MAX_AGE) . '-01-01';
                     @endphp
 
                     <div>
                         <label class="block text-[10px] font-bold text-gray-400 uppercase mb-2 ml-1">Date of Birth</label>
-                        <input type="date" name="dob" min="{{ $minDate }}" max="{{ $maxDate }}" required class="w-full border-gray-200 rounded-2xl focus:ring-green-500 @error('dob') border-red-500 @enderror">
+                        <input type="date" name="dob" value="{{ old('dob') }}" min="{{ $minDate }}" max="{{ $maxDate }}" required class="w-full border-gray-200 rounded-2xl focus:ring-green-500 @error('dob') border-red-500 @enderror">
+                        <p class="mt-1 ml-1 text-[10px] font-semibold text-gray-400">Must be {{ \App\Http\Controllers\MemberController::MAX_AGE }} or younger (born {{ substr($minDate, 0, 4) }} or later)</p>
                         @error('dob')
                             <p class="text-red-500 text-[10px] mt-1 ml-1">{{ $message }}</p>
                         @enderror
@@ -575,7 +581,7 @@
 
                         <div>
                             <label class="block text-[10px] font-bold text-gray-400 uppercase mb-2 ml-1">Upload Agri-Resume / Curriculum Vitae (PDF/Docx)</label>
-                            <input type="file" name="agri_resume_file" accept=".pdf,.doc,.docx" class="w-full text-xs text-gray-500 border border-gray-200 rounded-2xl file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100">
+                            <input type="file" name="member_file" accept=".pdf,.doc,.docx" class="w-full text-xs text-gray-500 border border-gray-200 rounded-2xl file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100">
                         </div>
                     </div>
                 </div>

@@ -13,6 +13,35 @@
         $photoUrl   = $member->photo_path ? asset('storage/' . $member->photo_path) : null;
         $dobValue   = $member->dob ? \Illuminate\Support\Carbon::parse($member->dob)->format('Y-m-d') : '';
         $missingId  = $member->missingIdFields();
+
+        // Specialization options (value => label)
+        $specializationOptions = [
+            'HVCDP'       => 'High Value Crops (HVCDP)',
+            'Livestock'   => 'Livestock',
+            'Fisheries'   => 'Fisheries',
+            'Rice'        => 'Rice',
+            'Corn'        => 'Corn',
+            'Poultry'     => 'Poultry',
+            'Combination' => 'Combination of Multiple Fields',
+        ];
+        $hvcdpOptions = [
+            'Vegetables'         => 'Vegetables',
+            'Fruits'             => 'Fruits',
+            'Industrial Crops'   => 'Industrial Crops',
+            'Alternative Staple' => 'Alternative Staple Food',
+            'Cut Across'         => 'Cut Across (Multiple)',
+        ];
+
+        // Match the saved value to an option even if its letter case differs (e.g. "rice" -> "Rice")
+        $matchOption = function (?string $value, array $options): string {
+            $value = trim((string) $value);
+            foreach (array_keys($options) as $key) {
+                if (strcasecmp($key, $value) === 0) return $key;
+            }
+            return $value;
+        };
+        $savedSpecialization = $matchOption(old('specialization', $member->specialization), $specializationOptions);
+        $savedHvcdp          = $matchOption(old('hvcdp_category', $member->hvcdp_category), $hvcdpOptions);
     @endphp
 
     <div class="py-6 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
@@ -364,7 +393,7 @@
 
                     {{-- Section B: Farm Profile & Operational Scale --}}
                     <section aria-labelledby="section-farm-profile" x-data="{ 
-                        isRsbsa: @json(old('is_rsbsa_registered', (string)($member->is_rsbsa_registered ?? '0')) === '1')
+                        isRsbsa: @js((string) old('is_rsbsa_registered', (int) ($member->is_rsbsa_registered ?? 0)) === '1')
                     }">
                         <h4 id="section-farm-profile" class="text-[11px] font-black text-gray-700 uppercase tracking-wider mb-4">B. Farm Profile & Scale of Operation</h4>
                         <div class="grid grid-cols-1 gap-4 md:grid-cols-4">
@@ -441,8 +470,8 @@
 
                     {{-- Section C: Machinery, Specialization & Agro-Practices --}}
                     <section aria-labelledby="section-machinery" x-data="{
-                        specialization: @json(old('specialization', $member->specialization ?? '')),
-                        hvcdpCategory: @json(old('hvcdp_category', $member->hvcdp_category ?? ''))
+                        specialization: @js($savedSpecialization),
+                        hvcdpCategory: @js($savedHvcdp)
                     }">
                         <h4 id="section-machinery" class="text-[11px] font-black text-gray-700 uppercase tracking-wider mb-4">C. Machinery, Skills & Agro-Practices</h4>
                         
@@ -457,13 +486,13 @@
                                     <div>
                                         <select id="specialization" name="specialization" x-model="specialization" required class="w-full border-gray-200 bg-gray-50 rounded-2xl focus:ring-emerald-500 focus:border-emerald-500 text-sm">
                                             <option value="">Select Specialization</option>
-                                            <option value="HVCDP">High Value Crops (HVCDP)</option>
-                                            <option value="Livestock">Livestock</option>
-                                            <option value="Fisheries">Fisheries</option>
-                                            <option value="Rice">Rice</option>
-                                            <option value="Corn">Corn</option>
-                                            <option value="Poultry">Poultry</option>
-                                            <option value="Combination">Combination of Multiple Fields</option>
+                                            @foreach($specializationOptions as $value => $label)
+                                                <option value="{{ $value }}" @selected($savedSpecialization === $value)>{{ $label }}</option>
+                                            @endforeach
+                                            @if($savedSpecialization !== '' && ! array_key_exists($savedSpecialization, $specializationOptions))
+                                                {{-- Older value that isn't in the list: keep it so it isn't lost on save --}}
+                                                <option value="{{ $savedSpecialization }}" selected>{{ $savedSpecialization }}</option>
+                                            @endif
                                         </select>
                                         @error('specialization')
                                             <p class="mt-1 text-xs text-red-500">{{ $message }}</p>
@@ -475,11 +504,9 @@
                                         <label for="hvcdp_category" class="block text-[10px] font-bold text-emerald-700 uppercase mb-2 ml-1">HVCDP Category</label>
                                         <select id="hvcdp_category" name="hvcdp_category" x-model="hvcdpCategory" class="w-full border-gray-200 rounded-xl bg-emerald-50/30 text-sm focus:ring-emerald-500 focus:border-emerald-500">
                                             <option value="">Select Category</option>
-                                            <option value="Vegetables">Vegetables</option>
-                                            <option value="Fruits">Fruits</option>
-                                            <option value="Industrial Crops">Industrial Crops</option>
-                                            <option value="Alternative Staple">Alternative Staple Food</option>
-                                            <option value="Cut Across">Cut Across (Multiple)</option>
+                                            @foreach($hvcdpOptions as $value => $label)
+                                                <option value="{{ $value }}" @selected($savedHvcdp === $value)>{{ $label }}</option>
+                                            @endforeach
                                         </select>
                                         @error('hvcdp_category')
                                             <p class="mt-1 text-xs text-red-500">{{ $message }}</p>

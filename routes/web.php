@@ -7,6 +7,7 @@ use App\Http\Controllers\OrganizationController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\UserController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Admin\MemberFormController;
 
 /*
 |--------------------------------------------------------------------------
@@ -90,4 +91,24 @@ Route::middleware(['auth', 'verified'])->group(function () {
     });
 });
 
+// Admin: Member Form Builder (manage member registration form)
+Route::middleware('auth')
+    ->prefix('admin/member-form')
+    ->name('admin.member-form.')
+    ->controller(MemberFormController::class)
+    ->group(function () {
+        Route::get('/', 'index')->name('index');
+
+        Route::post('/sections', 'storeSection')->name('sections.store');
+        Route::put('/sections/{section}', 'updateSection')->name('sections.update');
+        Route::patch('/sections/{section}/toggle', 'toggleSection')->name('sections.toggle');
+        Route::delete('/sections/{section}', 'destroySection')->name('sections.destroy');
+
+        Route::post('/fields', 'storeField')->name('fields.store');
+        Route::put('/fields/{field}', 'updateField')->name('fields.update');
+        Route::patch('/fields/{field}/toggle', 'toggleField')->name('fields.toggle');
+        Route::delete('/fields/{field}', 'destroyField')->name('fields.destroy');
+    });
+
+    
 require __DIR__ . '/auth.php';

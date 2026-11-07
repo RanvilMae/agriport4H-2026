@@ -57,6 +57,47 @@
                 </div>
             </div>
 
+            {{-- Badge counts --}}
+            @php
+                $navUser    = auth()->user();
+                $navRole    = $navUser?->role;
+                $isLeader   = in_array($navRole, ['Admin', 'President', 'Coordinator']);
+                $isRegional = in_array($navRole, ['President', 'Coordinator']);
+
+                $pendingApprovals = 0;   // accounts waiting for activation
+                $pendingVerify    = 0;   // members not yet verified
+                $incompleteCount  = 0;   // members who can't print their ID yet
+                $myMissing        = null; // logged-in member's own missing ID details
+
+                if ($navUser && $isLeader) {
+                    $pendingApprovals = \App\Models\User::where(fn ($q) => $q->where('is_accepted', false)->orWhereNull('is_accepted'))
+                        ->when($isRegional, fn ($q) => $q->where('region_id', $navUser->region_id))
+                        ->count();
+
+                    $memberScope = \App\Models\Member::query()
+                        ->when($isRegional, fn ($q) => $q->where('region_id', $navUser->region_id));
+
+                    $pendingVerify = (clone $memberScope)->whereNull('verified_at')->count();
+
+                    $incompleteCount = (clone $memberScope)->where(function ($q) {
+                        foreach (array_keys(\App\Models\Member::ID_REQUIRED_FIELDS) as $column) {
+                            $q->orWhereNull($column)->orWhere($column, '');
+                        }
+                    })->count();
+                }
+
+                if ($navUser && in_array($navRole, ['Member', 'President'])) {
+                    $myMember = \App\Models\Member::where('user_id', $navUser->id)
+                        ->orWhere('email', $navUser->email)
+                        ->orderByRaw('user_id = ? DESC', [$navUser->id])
+                        ->first();
+                    $myMissing = $myMember ? count($myMember->missingIdFields()) : null;
+                }
+
+                $alertTotal = $pendingApprovals + $pendingVerify;
+                $badge = 'ml-auto inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 rounded-full text-[9px] font-black leading-none';
+            @endphp
+
             {{-- Navigation Items --}}
             <nav class="flex-1 px-3 mt-4 space-y-1 overflow-y-auto custom-scrollbar" aria-label="Sidebar Navigation">
                 
@@ -77,7 +118,16 @@
                     <a href="{{ route('member.profile.show') }}" 
                        class="group flex items-center space-x-2.5 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('member.profile.show') ? 'bg-emerald-50 text-emerald-700 border-l-2 border-emerald-600 font-bold' : 'text-slate-500 hover:bg-gray-50' }}">
                         <i class="w-4 text-xs text-center fas fa-user-circle" aria-hidden="true"></i>
-                        <span class="text-xs">My Profile & Details</span>
+                        <span class="flex-1 text-xs">My Profile & Details</span>
+                        @if($myMissing === 0)
+                            <span class="{{ $badge }} bg-emerald-100 text-emerald-700" title="Profile complete. Your ID can be printed">
+                                <i class="fas fa-check text-[8px]" aria-hidden="true"></i>
+                            </span>
+                        @elseif($myMissing)
+                            <span class="{{ $badge }} bg-amber-100 text-amber-700" title="{{ $myMissing }} detail(s) missing before your ID can be printed">
+                                {{ $myMissing }}
+                            </span>
+                        @endif
                     </a>
 
                     {{-- Agri-Resume Preview -> members/showAgri-resume-preview.blade.php --}}
@@ -104,7 +154,17 @@
                     <a href="{{ route('members.index') }}" 
                        class="group flex items-center space-x-2.5 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('members.index') || request()->routeIs('members.edit') || request()->routeIs('members.create') ? 'bg-emerald-50 text-emerald-700 border-l-2 border-emerald-600 font-bold' : 'text-slate-500 hover:bg-gray-50' }}">
                         <i class="w-4 text-xs text-center fas fa-address-book" aria-hidden="true"></i>
-                        <span class="text-xs">4-H Members Directory</span>
+                        <span class="flex-1 text-xs">4-H Members Directory</span>
+                        @if($pendingVerify || $incompleteCount)
+                            <span class="flex items-center gap-1 ml-auto">
+                                @if($pendingVerify)
+                                    <span class="{{ str_replace('ml-auto ', '', $badge) }} bg-amber-100 text-amber-700" title="{{ $pendingVerify }} member(s) waiting for verification">{{ $pendingVerify > 99 ? '99+' : $pendingVerify }}</span>
+                                @endif
+                                @if($incompleteCount)
+                                    <span class="{{ str_replace('ml-auto ', '', $badge) }} bg-rose-100 text-rose-700" title="{{ $incompleteCount }} member(s) with incomplete profiles (ID can't be printed)">{{ $incompleteCount > 99 ? '99+' : $incompleteCount }}</span>
+                                @endif
+                            </span>
+                        @endif
                     </a>
 
                     <a href="{{ route('organizations.index') }}" 
@@ -120,7 +180,12 @@
                     <a href="{{ route('users.index') }}"
                        class="flex items-center space-x-2.5 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('users.*') ? 'bg-slate-800 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100' }}">
                         <i class="w-4 text-xs text-center fas fa-users-cog" aria-hidden="true"></i>
-                        <span class="text-xs font-bold">User Access</span>
+                        <span class="flex-1 text-xs font-bold">User Access</span>
+                        @if($pendingApprovals)
+                            <span class="{{ $badge }} bg-red-500 text-white shadow-sm shadow-red-200" title="{{ $pendingApprovals }} account(s) waiting for approval">
+                                {{ $pendingApprovals > 99 ? '99+' : $pendingApprovals }}
+                            </span>
+                        @endif
                     </a>
 
                     <a href="{{ route('announcements.index') }}"
@@ -128,6 +193,14 @@
                         <i class="w-4 text-xs text-center text-indigo-500 fas fa-bullhorn" aria-hidden="true"></i>
                         <span class="text-xs font-bold">Announcements</span>
                     </a>
+
+                    @if($navUser?->isAdmin() && \Illuminate\Support\Facades\Route::has('admin.member-form.index'))
+                        <a href="{{ route('admin.member-form.index') }}"
+                           class="flex items-center space-x-2.5 px-3 py-2 rounded-lg transition-all {{ request()->routeIs('admin.member-form.*') ? 'bg-slate-800 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100' }}">
+                            <i class="w-4 text-xs text-center fas fa-sliders text-violet-500" aria-hidden="true"></i>
+                            <span class="text-xs font-bold">Member Form Builder</span>
+                        </a>
+                    @endif
                 @endif
             </nav>
 
@@ -210,6 +283,41 @@
                             <i class="fa-solid fa-file-invoice text-emerald-600" aria-hidden="true"></i>
                             <span class="hidden md:inline">Agri-Resume Preview</span>
                         </a>
+                    @endif
+
+                    {{-- Alerts bell (Admin / President / Coordinator) --}}
+                    @if($isLeader)
+                        <div class="relative" x-data="{ open: false }">
+                            <button @click="open = !open" @click.away="open = false" type="button"
+                                    class="relative p-2 text-gray-500 transition-colors rounded-lg hover:text-emerald-600 hover:bg-emerald-50"
+                                    aria-label="Alerts" :aria-expanded="open.toString()">
+                                <i class="text-base fas fa-bell" aria-hidden="true"></i>
+                                @if($alertTotal)
+                                    <span class="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-black ring-2 ring-white">
+                                        {{ $alertTotal > 99 ? '99+' : $alertTotal }}
+                                    </span>
+                                @endif
+                            </button>
+
+                            <div x-show="open" x-cloak x-transition style="display: none;"
+                                 class="absolute right-0 z-50 mt-2 overflow-hidden bg-white border shadow-xl w-72 rounded-2xl border-slate-100">
+                                <div class="px-4 py-3 border-b bg-slate-50 border-slate-100">
+                                    <p class="text-[10px] font-black tracking-widest uppercase text-slate-500">Needs your attention</p>
+                                </div>
+                                <a href="{{ route('users.index') }}" class="flex items-center justify-between px-4 py-3 text-xs font-bold text-slate-700 hover:bg-slate-50">
+                                    <span><i class="w-4 mr-2 text-red-500 fas fa-user-clock" aria-hidden="true"></i>Accounts awaiting approval</span>
+                                    <span class="{{ str_replace('ml-auto ', '', $badge) }} {{ $pendingApprovals ? 'bg-red-500 text-white' : 'bg-slate-100 text-slate-400' }}">{{ $pendingApprovals }}</span>
+                                </a>
+                                <a href="{{ route('members.index') }}" class="flex items-center justify-between px-4 py-3 text-xs font-bold border-t text-slate-700 hover:bg-slate-50 border-slate-50">
+                                    <span><i class="w-4 mr-2 fas fa-shield-alt text-amber-500" aria-hidden="true"></i>Members to verify</span>
+                                    <span class="{{ str_replace('ml-auto ', '', $badge) }} {{ $pendingVerify ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-400' }}">{{ $pendingVerify }}</span>
+                                </a>
+                                <a href="{{ route('members.index') }}" class="flex items-center justify-between px-4 py-3 text-xs font-bold border-t text-slate-700 hover:bg-slate-50 border-slate-50">
+                                    <span><i class="w-4 mr-2 fas fa-id-card text-rose-500" aria-hidden="true"></i>Incomplete profiles</span>
+                                    <span class="{{ str_replace('ml-auto ', '', $badge) }} {{ $incompleteCount ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-400' }}">{{ $incompleteCount }}</span>
+                                </a>
+                            </div>
+                        </div>
                     @endif
 
                     {{-- Role & Scope Badge --}}
